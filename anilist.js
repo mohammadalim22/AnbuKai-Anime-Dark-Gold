@@ -6,7 +6,13 @@
 var FIELDS='id title{romaji english}averageScore seasonYear startDate{year}status genres episodes coverImage{large}bannerImage description(asHtml:false)nextAiringEpisode{episode}';
 var FR='fragment F on Media{'+FIELDS+'}';
 var HQ='query{t:Page(perPage:20){media(type:ANIME,sort:TRENDING_DESC,isAdult:false){...F}}p:Page(perPage:20){media(type:ANIME,sort:POPULARITY_DESC,isAdult:false){...F}}r:Page(perPage:20){media(type:ANIME,sort:SCORE_DESC,isAdult:false){...F}}}'+FR;
-var BQ='query($p:Int,$f:[MediaFormat],$g:String,$q:String,$s:[MediaSort]){Page(page:$p,perPage:30){pageInfo{hasNextPage}media(type:ANIME,format_in:$f,genre:$g,search:$q,sort:$s,isAdult:false){...F}}}'+FR;
+function bq(o){
+  var a='type:ANIME,isAdult:false,sort:'+(o.q?'SEARCH_MATCH':'POPULARITY_DESC');
+  if(o.f)a+=',format_in:['+o.f.join(',')+']';
+  if(o.g)a+=',genre:"'+String(o.g).replace(/["\\]/g,'')+'"';
+  if(o.q)a+=',search:$q';
+  return 'query($p:Int'+(o.q?',$q:String':'')+'){Page(page:$p,perPage:30){pageInfo{hasNextPage}media('+a+'){...F}}}'+FR;
+}
 var SQ='query($s:String){Page(perPage:8){media(type:ANIME,search:$s,sort:SEARCH_MATCH,isAdult:false){...F}}}'+FR;
 var ST={RELEASING:'ONGOING',FINISHED:'COMPLETED',NOT_YET_RELEASED:'UPCOMING',CANCELLED:'CANCELLED',HIATUS:'HIATUS'};
 var KN=ls('akK')||{},HOME=null,TOK=0,VIEW='home',RES=[],ST_T=0,akExtra=-1;
@@ -19,7 +25,7 @@ document.head.appendChild(sty);
 function gql(q,v){
   return fetch('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:q,variables:v||{}})})
   .then(function(r){return r.json()})
-  .then(function(j){if(j.errors||!j.data)throw 0;return j.data});
+  .then(function(j){if(j.errors||!j.data)throw new Error(j.errors&&j.errors[0]&&j.errors[0].message||'No data');return j.data});
 }
 function cvt(m){
   var t=m.title.english||m.title.romaji,y=m.seasonYear||(m.startDate&&m.startDate.year)||'',
@@ -94,14 +100,15 @@ function browse(o){
   var gv=document.getElementById('gv'),gs=document.getElementById('gs'),lm=document.getElementById('lm');
   function more(){
     pg++;gs.textContent='Loading...';lm.style.display='none';
-    gql(BQ,{p:pg,f:o.f||null,g:o.g||null,q:o.q||null,s:[o.q?'SEARCH_MATCH':'POPULARITY_DESC']}).then(function(d){
+    var vars={p:pg};if(o.q)vars.q=o.q;
+    gql(bq(o),vars).then(function(d){
       if(tok!==TOK)return;
       var P=d.Page,h='';
       P.media.forEach(function(m){var a=cvt(m);h+=cardH(a,ALL.push(a)-1)});
       gv.insertAdjacentHTML('beforeend',h);saveKN();decorate();
       gs.textContent=(pg===1&&!P.media.length)?'No anime found':'';
       lm.style.display=P.pageInfo.hasNextPage?'':'none';
-    }).catch(function(){if(tok===TOK){gs.textContent='Could not load. Check your internet.';lm.style.display='';lm.textContent='Try again';pg--}});
+    }).catch(function(e){if(tok===TOK){gs.textContent='Could not load: '+(e&&e.message||e);lm.style.display='';lm.textContent='Try again';pg--}});
   }
   lm.onclick=more;more();
 }
