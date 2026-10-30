@@ -9,10 +9,10 @@ document.querySelectorAll('.bm').forEach(function(b){
 var SH={};
 var PG=100;
 
-// 🚨 সব সার্ভার চেক করার আপডেট করা ফাংশন 🚨
+// 🚨 তোমার API-এর streams অ্যারে থেকে লিংক নেওয়ার ফাংশন 🚨
 async function getStream(anilistId, episode, type){
   // একাধিক সার্ভারের লিস্ট (যেকোনো একটা কাজ করলেই হবে)
-  const providers = ["anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves", "mkissa"];
+  const providers = ["mkissa", "anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves"];
   const baseUrl = "https://anivexa-api-wi89.onrender.com";
   const audio = type === 'dub' ? 'dub' : 'sub';
 
@@ -20,23 +20,27 @@ async function getStream(anilistId, episode, type){
     const provider = providers[i];
     try {
       const epId = `${provider}-${episode}`;
-      // API-এর সঠিক রাউট: /watch/provider/anilistId/audio/epId
       const apiUrl = `${baseUrl}/watch/${provider}/${anilistId}/${audio}/${epId}`;
       
       const response = await fetch(apiUrl);
       
-      // যদি সার্ভার রেসপন্স না দেয়, তবে পরের সার্ভারে যাবে
+      // যদি সার্ভার রেসপন্স 404 বা এরর দেয়, তবে পরের সার্ভারে যাবে
       if (!response.ok) continue; 
 
       const data = await response.json();
       
-      // যদি ডাটা পাওয়া যায়
-      if (data && data.sources && data.sources.length > 0) {
-        const m3u8 = data.sources.find(s => s.url.includes('.m3u8'));
+      // 🚨 এখানেই ফিক্স করা হয়েছে (streams এবং sources দুটোই চেক করবে) 🚨
+      let streamList = data.streams || data.sources;
+      
+      if (streamList && streamList.length > 0) {
+        // m3u8 লিংক থাকলে সেটাই আগে নিবে (HLS)
+        const m3u8 = streamList.find(s => s.url && s.url.includes('.m3u8'));
         if (m3u8) return m3u8.url;
-        return data.sources[0].url;
+        // অন্যথায় প্রথম লিংকটাই নিবে
+        if (streamList[0].url) return streamList[0].url;
       }
-      if (data && data.url) return data.url;
+      
+      if (data.url) return data.url;
       
     } catch (error) {
       console.log(`Server ${provider} failed, trying next...`);
@@ -110,6 +114,7 @@ async function paint(){
   t.removeAttribute('style');
   t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
   
+  // HLS ভিডিও প্লেয়ার চালু করা
   if(u && u.includes('.m3u8')){
     setTimeout(function(){
       var video = document.getElementById('hls-video');
