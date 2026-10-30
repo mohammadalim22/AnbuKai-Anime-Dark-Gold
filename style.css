@@ -230,4 +230,9 @@ body::after{display:none}
 @media (pointer:coarse){
   header{background:var(--bg)}
   .dock{background:var(--s1)}
-}
+}/* ===== AniList poster images ===== */
+.poster .pi{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+.poster::after{z-index:1}
+.poster .rate,.poster .bm,.poster .nw,.poster .wbtn{z-index:3}
+.poster .pi~.l{display:none}
+.sh-b p.ds{font-size:.82rem;color:var(--muted);margin:0 0 16px;line-height:1.5}
