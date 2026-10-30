@@ -43,8 +43,8 @@ async function paint(){
     t.innerHTML = '<div class="nov"><b>⏳</b><span>Loading stream...</span><small>Please wait</small></div><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
 
     try {
-      // AniList ID নেওয়ার চেষ্টা (যদি থাকে)
-      var anilistId = a[8] || a[5] || a.id || null;
+      // 🚨 ফিক্স করা হয়েছে: a[10] হলো AniList ID 🚨
+      var anilistId = a[10] || a.id || null;
 
       if(anilistId && typeof getStream === 'function'){
         var streamUrl = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
