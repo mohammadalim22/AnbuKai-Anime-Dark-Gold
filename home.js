@@ -10,7 +10,6 @@ S.forEach(function(s,si){
 });
 document.getElementById('app').innerHTML=out;
 showHero(0);autoHero();
-var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
 
 var GN=['All','Action','Adventure','Romance','Fantasy','Comedy','Horror','Sci-Fi','Mystery','Sports'];
 document.getElementById('genres').innerHTML=GN.map(function(g,i){return '<span class="'+(i?'':'on')+'">'+g+'</span>'}).join('');
