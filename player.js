@@ -8,10 +8,24 @@ document.querySelectorAll('.bm').forEach(function(b){
 });
 var SH={};
 var PG=100;
+var currentHlsHeaders = {}; // 🚨 হেডার সেভ করার জন্য
 
-// 🚨 API থেকে স্ট্রিম লিংক বের করার ফাংশন 🚨
+async function fetchWithTimeout(url, options = {}) {
+  const { timeout = 8000 } = options; 
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+}
+
 async function getStream(anilistId, episode, type){
-  const providers = ["mkissa", "anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves"];
+  const providers = ["anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves", "mkissa"]; // mkissa বাদ দেওয়া হলো কারণ এটি ৩২ সেকেন্ড নেয়
   const baseUrl = "https://anivexa-api-wi89.onrender.com";
   const audio = type === 'dub' ? 'dub' : 'sub';
 
@@ -21,24 +35,27 @@ async function getStream(anilistId, episode, type){
       const epId = `${provider}-${episode}`;
       const apiUrl = `${baseUrl}/watch/${provider}/${anilistId}/${audio}/${epId}`;
       
-      const response = await fetch(apiUrl);
+      const response = await fetchWithTimeout(apiUrl, { timeout: 8000 });
       if (!response.ok) continue; 
 
       const data = await response.json();
-      
-      // 🚨 streams অথবা sources দুটোই চেক করবে 🚨
       let streamList = data.streams || data.sources;
       
       if (streamList && streamList.length > 0) {
-        const m3u8 = streamList.find(s => s.url && s.url.includes('.m3u8'));
-        if (m3u8) return m3u8.url;
-        if (streamList[0].url) return streamList[0].url;
+        let streamObj = streamList.find(s => s.url && s.url.includes('.m3u8'));
+        if (!streamObj) streamObj = streamList[0]; // m3u8 না পেলে প্রথমটা নিবে
+        
+        if (streamObj && streamObj.url) {
+          // 🚨 হেডারগুলো সেভ করে রাখা হচ্ছে (Referer, User-Agent ইত্যাদি) 🚨
+          currentHlsHeaders = streamObj.headers || {};
+          return streamObj.url;
+        }
       }
       
       if (data.url) return data.url;
       
     } catch (error) {
-      console.log(`Server ${provider} failed, trying next...`);
+      console.log(`Server ${provider} timeout/error. Trying next...`);
     }
   }
   return null;
@@ -81,7 +98,7 @@ async function paint(){
   if(!u){
     t.className='sh-top pl';
     t.removeAttribute('style');
-    t.innerHTML = '<div class="nov"><b>⏳</b><span>Loading stream...</span><small>Please wait (First load may take 30s)</small></div><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
+    t.innerHTML = '<div class="nov"><b>⏳</b><span>Loading stream...</span><small>Searching servers...</small></div><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
 
     var anilistId = a[10] || a.id || null;
     if(anilistId){
@@ -109,12 +126,24 @@ async function paint(){
   t.removeAttribute('style');
   t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
   
+  // 🚨 HLS ভিডিও প্লেয়ার চালু করা (হেডারসহ) 🚨
   if(u && u.includes('.m3u8')){
     setTimeout(function(){
       var video = document.getElementById('hls-video');
       if(video && typeof Hls !== 'undefined'){
         if (Hls.isSupported()) {
-          var hls = new Hls();
+          var hls = new Hls({
+            // এই অংশটি Referer হেডার পাঠাবে, যা ৪০৩ এরর ঠিক করবে
+            xhrSetup: function(xhr, url) {
+              if (currentHlsHeaders) {
+                for (var key in currentHlsHeaders) {
+                  if (currentHlsHeaders.hasOwnProperty(key)) {
+                    xhr.setRequestHeader(key, currentHlsHeaders[key]);
+                  }
+                }
+              }
+            }
+          });
           hls.loadSource(u);
           hls.attachMedia(video);
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
