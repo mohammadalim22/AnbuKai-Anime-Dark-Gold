@@ -1,7 +1,4 @@
-/* ===== AniList API (free, no key) =====
-   Home sections + Search + Anime / Movies / My List / Genre pages
-   Entry format: [rating, title, 'year • STATUS • Genre', cover, banner, episodes, seasons, description, format, duration, anilistId]
-   index.html e player.js er PORE load hobe: <script src="anilist.js"></script> */
+/* ===== AniList API ===== */
 (function(){
 var FIELDS='id title{romaji english}averageScore seasonYear startDate{year}status format duration genres episodes coverImage{large}bannerImage description(asHtml:false)nextAiringEpisode{episode}';
 var FR='fragment F on Media{'+FIELDS+'}';
@@ -17,7 +14,6 @@ var SQ='query($s:String){Page(perPage:8){media(type:ANIME,search:$s,sort:SEARCH_
 var ST={RELEASING:'ONGOING',FINISHED:'COMPLETED',NOT_YET_RELEASED:'UPCOMING',CANCELLED:'CANCELLED',HIATUS:'HIATUS'};
 var KN=ls('akK')||{},HOME=null,TOK=0,VIEW='home',RES=[],ST_T=0,akExtra=-1;
 
-/* inject grid css (style.css e kichu add korte hobe na) */
 var sty=document.createElement('style');
 sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px;padding:16px 16px 10px}@media(min-width:700px){.gv{grid-template-columns:repeat(5,minmax(0,1fr))}}@media(min-width:1000px){.gv{grid-template-columns:repeat(7,minmax(0,1fr))}}.gv .card{flex:none}.dock a{cursor:pointer}'
 +'.sh-top.pl{position:sticky;top:0;z-index:6}'
@@ -50,7 +46,6 @@ function gql(q,v){
 }
 function fm(f){return f==='MOVIE'?'Movie':f==='TV_SHORT'?'TV Short':f||'TV'}
 
-// 🚨 এখানেই ফিক্স করা হয়েছে (m.id যোগ করা হয়েছে) 🚨
 function cvt(m){
   var t=m.title.english||m.title.romaji,y=m.seasonYear||(m.startDate&&m.startDate.year)||'',
   r=m.averageScore?(m.averageScore/10).toFixed(1):'N/A',
@@ -90,7 +85,6 @@ function buildHome(sets){
   arrows();decorate();initHero(sets);
 }
 
-/* ---------- chrome (hero / genre chips / dock) ---------- */
 function chrome(h,g){
   heroWrap().style.display=h?'':'none';
   document.getElementById('genres').style.display=g?'':'none';
@@ -98,7 +92,6 @@ function chrome(h,g){
 function dock(n){document.querySelectorAll('.dock a').forEach(function(a,i){a.classList.toggle('on',i===n)})}
 function chip(n){document.querySelectorAll('#genres span').forEach(function(s,i){s.classList.toggle('on',i===n)})}
 
-/* ---------- Home ---------- */
 function showHome(){
   nv({p:'home'});
   VIEW='home';TOK++;chrome(1,1);dock(0);chip(0);window.scrollTo(0,0);
@@ -118,7 +111,6 @@ function loadHome(){
   }).catch(function(){});
 }
 
-/* ---------- Grid pages: Anime / Movies / Genre ---------- */
 function browse(o){
   nv({p:'b',o:o});
   var app=document.getElementById('app'),pg=0,tok=++TOK;
@@ -143,7 +135,6 @@ function showAnime(){browse({label:'BROWSE',title:'Anime',f:['TV','TV_SHORT','ON
 function showMovies(){browse({label:'BROWSE',title:'Movies',f:['MOVIE'],chips:0,dock:2})}
 function showGenre(g){browse({label:'GENRE',title:g,g:g,chips:1,dock:0})}
 
-/* ---------- My List ---------- */
 function showList(){
   if(!U){authView('in');toast('Login to see My List');return}
   nv({p:'l'});
@@ -154,7 +145,6 @@ function showList(){
   decorate();
 }
 
-/* ---------- dock + genre chips ---------- */
 var acts=[showHome,showAnime,showMovies,showList];
 document.querySelectorAll('.dock a').forEach(function(a,i){
   a.onclick=function(e){e.preventDefault();acts[i]()};
@@ -163,7 +153,6 @@ document.querySelectorAll('#genres span').forEach(function(s,i){
   s.onclick=function(){chip(i);if(!i)showHome();else showGenre(s.textContent.trim())};
 });
 
-/* ---------- Search (AniList theke, sob anime) ---------- */
 var qi=document.getElementById('q'),nq=qi.cloneNode(true);
 qi.parentNode.replaceChild(nq,qi);q=nq;
 nq.addEventListener('input',function(){
@@ -190,7 +179,6 @@ function openEntry(a){
 }
 window.akPick=function(i){var a=RES[i];if(!a)return;sr.className='';nq.value='';sr.innerHTML='';openEntry(a)};
 window.openByName=function(n){var a=KN[n]||ALL.filter(function(x){return x[1]===n})[0];if(a){closeM();openEntry(a)}};
-/* Go/Enter ba 🔍 tap korle full search result page */
 function doSearch(){
   var v=nq.value.trim();
   if(!v){nq.focus();return}
@@ -204,7 +192,6 @@ if(mg){mg.style.cursor='pointer';mg.onclick=doSearch}
 var oc=closeSheet;
 window.closeSheet=function(){oc();if(akExtra>-1&&akExtra===ALL.length-1)ALL.pop();akExtra=-1};
 
-/* ---------- Hero (AniList trending banner, auto slide + swipe) ---------- */
 var HERO=[],HI=0,newW=null,oldW=document.getElementById('hero').parentNode;
 function heroWrap(){return newW||oldW}
 function initHero(sets){
@@ -235,7 +222,6 @@ window.akHG=heroGo;
 window.akHP=function(){openEntry(HERO[HI]);play()};
 window.akHL=function(){toggleList(HERO[HI][1]);heroDraw()};
 
-/* ---------- Back button support (nav.js er sathe) ---------- */
 var NV=0;
 function nv(s){if(!NV&&window.akPush)window.akPush(s)}
 window.akGo=function(s){NV=1;try{
