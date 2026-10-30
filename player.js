@@ -14,7 +14,7 @@ function watch(i,k){
 document.addEventListener('click',function(e){if(!e.target.closest('.search'))sr.className=''});
 
 document.querySelectorAll('.arr button').forEach(function(b){
-  b.onclick=function(){var r=document.getElementById(b.dataset.r);r.scrollBy({left:b.dataset.d*r.clientWidth*.9,behavior:'auto'})};
+  b.onclick=function(){var r=document.getElementById(b.dataset.r);r.scrollBy({left:b.dataset.d*r.clientWidth*.9,behavior:'smooth'})};
 });
 document.querySelectorAll('.bm').forEach(function(b){
   b.onclick=function(e){e.stopPropagation();b.classList.toggle('on')};
