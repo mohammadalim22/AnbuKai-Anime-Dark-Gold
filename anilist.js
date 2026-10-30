@@ -1,6 +1,6 @@
 /* ===== AniList API (free, no key) =====
    Home sections + Search + Anime / Movies / My List / Genre pages
-   Entry format: [rating, title, 'year • STATUS • Genre', cover, banner, episodes, seasons, description]
+   Entry format: [rating, title, 'year • STATUS • Genre', cover, banner, episodes, seasons, description, format, duration, anilistId]
    index.html e player.js er PORE load hobe: <script src="anilist.js"></script> */
 (function(){
 var FIELDS='id title{romaji english}averageScore seasonYear startDate{year}status format duration genres episodes coverImage{large}bannerImage description(asHtml:false)nextAiringEpisode{episode}';
@@ -49,6 +49,8 @@ function gql(q,v){
   .then(function(j){if(j.errors||!j.data)throw new Error(j.errors&&j.errors[0]&&j.errors[0].message||'No data');return j.data});
 }
 function fm(f){return f==='MOVIE'?'Movie':f==='TV_SHORT'?'TV Short':f||'TV'}
+
+// 🚨 এখানেই ফিক্স করা হয়েছে (m.id যোগ করা হয়েছে) 🚨
 function cvt(m){
   var t=m.title.english||m.title.romaji,y=m.seasonYear||(m.startDate&&m.startDate.year)||'',
   r=m.averageScore?(m.averageScore/10).toFixed(1):'N/A',
@@ -57,7 +59,8 @@ function cvt(m){
   a;
   if(d.length>260)d=d.slice(0,257)+'...';
   EPN[t]=ep;
-  a=[r,t,y+' • '+(ST[m.status]||m.status)+' • '+(m.genres&&m.genres[0]||'Anime'),m.coverImage&&m.coverImage.large||'',m.bannerImage||'',ep,1,d,fm(m.format),m.duration||0];
+  // Index: 0=rating, 1=title, 2=meta, 3=cover, 4=banner, 5=episodes, 6=seasons, 7=desc, 8=format, 9=duration, 10=anilistId
+  a=[r,t,y+' • '+(ST[m.status]||m.status)+' • '+(m.genres&&m.genres[0]||'Anime'),m.coverImage&&m.coverImage.large||'',m.bannerImage||'',ep,1,d,fm(m.format),m.duration||0, m.id];
   KN[t]=a;
   return a;
 }
