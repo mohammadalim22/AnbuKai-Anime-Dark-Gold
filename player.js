@@ -9,25 +9,29 @@ document.querySelectorAll('.bm').forEach(function(b){
 var SH={};
 var PG=100;
 
-// 🚨 Anivexa API থেকে স্ট্রিম লিংক বের করার ফাংশন 🚨
+// 🚨 সব সার্ভার চেক করার আপডেট করা ফাংশন 🚨
 async function getStream(anilistId, episode, type){
-  const providers = ["reanime", "anikoto", "anizone", "aniwaves", "kaa", "senshi"];
+  // একাধিক সার্ভারের লিস্ট (যেকোনো একটা কাজ করলেই হবে)
+  const providers = ["anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves", "mkissa"];
   const baseUrl = "https://anivexa-api-wi89.onrender.com";
   const audio = type === 'dub' ? 'dub' : 'sub';
 
-  for (const provider of providers) {
+  for (let i = 0; i < providers.length; i++) {
+    const provider = providers[i];
     try {
       const epId = `${provider}-${episode}`;
       // API-এর সঠিক রাউট: /watch/provider/anilistId/audio/epId
       const apiUrl = `${baseUrl}/watch/${provider}/${anilistId}/${audio}/${epId}`;
       
       const response = await fetch(apiUrl);
-      if (!response.ok) continue; // যদি না পায় তবে পরের প্রোভাইডারে যাবে
+      
+      // যদি সার্ভার রেসপন্স না দেয়, তবে পরের সার্ভারে যাবে
+      if (!response.ok) continue; 
 
       const data = await response.json();
       
+      // যদি ডাটা পাওয়া যায়
       if (data && data.sources && data.sources.length > 0) {
-        // m3u8 লিংক থাকলে সেটাই আগে নিবে (HLS)
         const m3u8 = data.sources.find(s => s.url.includes('.m3u8'));
         if (m3u8) return m3u8.url;
         return data.sources[0].url;
@@ -35,10 +39,10 @@ async function getStream(anilistId, episode, type){
       if (data && data.url) return data.url;
       
     } catch (error) {
-      console.log(`Provider ${provider} failed, trying next...`);
+      console.log(`Server ${provider} failed, trying next...`);
     }
   }
-  return null;
+  return null; // কোনো সার্ভারেই না পেলে null
 }
 
 function hasVid(n){var a=VIDEOS[n];return !!a&&Object.keys(a).length>0}
@@ -93,7 +97,6 @@ async function paint(){
     b='<div class="nov"><b>▶</b><span>'+esc(a[1])+' · S'+SH.s+' E'+SH.e+'</span><small>'+SH.l.toUpperCase()+' · Server 0'+(SH.v+1)+' · Video not found</small></div>';
   }
   else if(u.includes('.m3u8')){
-    // 🚨 HLS (.m3u8) ভিডিও প্লে করার কোড 🚨
     b='<video id="hls-video" controls playsinline autoplay onended="if(U&&U.prefs.auto&&SH.e<eN())play(SH.e+1)"></video>';
   }
   else if(/\.(mp4|webm|ogg)(\?|$)/i.test(u)){
@@ -107,7 +110,6 @@ async function paint(){
   t.removeAttribute('style');
   t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
   
-  // HLS ভিডিও প্লেয়ার চালু করা
   if(u && u.includes('.m3u8')){
     setTimeout(function(){
       var video = document.getElementById('hls-video');
