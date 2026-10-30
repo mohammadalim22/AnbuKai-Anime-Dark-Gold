@@ -97,6 +97,7 @@ function chip(n){document.querySelectorAll('#genres span').forEach(function(s,i)
 
 /* ---------- Home ---------- */
 function showHome(){
+  nv({p:'home'});
   VIEW='home';TOK++;chrome(1,1);dock(0);chip(0);window.scrollTo(0,0);
   if(HOME)buildHome(HOME);else loadHome();
 }
@@ -116,6 +117,7 @@ function loadHome(){
 
 /* ---------- Grid pages: Anime / Movies / Genre ---------- */
 function browse(o){
+  nv({p:'b',o:o});
   var app=document.getElementById('app'),pg=0,tok=++TOK;
   VIEW='b';chrome(0,o.chips);dock(o.dock);resetAll();window.scrollTo(0,0);
   app.innerHTML='<section><div class="head"><div><small>'+o.label+'</small><h2>'+esc(o.title)+'</h2></div></div><div class="gv" id="gv"></div><p class="mu" id="gs" style="text-align:center;padding:14px">Loading...</p><div style="text-align:center"><button class="btn" id="lm" style="display:none">Load more</button></div></section>';
@@ -141,6 +143,7 @@ function showGenre(g){browse({label:'GENRE',title:g,g:g,chips:1,dock:0})}
 /* ---------- My List ---------- */
 function showList(){
   if(!U){authView('in');toast('Login to see My List');return}
+  nv({p:'l'});
   VIEW='l';TOK++;chrome(0,0);dock(3);resetAll();window.scrollTo(0,0);
   var L=U.list.map(function(n){return KN[n]}).filter(Boolean),h='';
   L.forEach(function(a){h+=cardH(a,ALL.push(a)-1)});
@@ -228,6 +231,18 @@ function heroDraw(){
 window.akHG=heroGo;
 window.akHP=function(){openEntry(HERO[HI]);play()};
 window.akHL=function(){toggleList(HERO[HI][1]);heroDraw()};
+
+/* ---------- Back button support (nav.js er sathe) ---------- */
+var NV=0;
+function nv(s){if(!NV&&window.akPush)window.akPush(s)}
+window.akGo=function(s){NV=1;try{
+  if(s.p==='home')showHome();
+  else if(s.p==='l')showList();
+  else if(s.p==='b'){
+    browse(s.o);
+    if(s.o.g){document.querySelectorAll('#genres span').forEach(function(x,i){if(x.textContent.trim()===s.o.g)chip(i)})}
+  }
+}finally{NV=0}};
 
 loadHome();
 })();
