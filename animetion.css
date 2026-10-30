@@ -1,0 +1,61 @@
+/* ANIMATIONS (optional): remove <link href="animations.css"> from index.html to turn all CSS animations off */
+@keyframes sheen{from{background-position:0% 0}to{background-position:100% 0}}
+@keyframes float{to{transform:translate(-40px,40px) scale(1.15)}}
+@keyframes shine{0%,55%{left:-60%}100%{left:130%}}
+@keyframes rise{to{opacity:1;transform:none}}
+@keyframes fill{to{width:100%}}
+@keyframes shine2{0%,55%{transform:translateX(-160%) skewX(-20deg)}100%{transform:translateX(420%) skewX(-20deg)}}
+.search{transition:.2s}
+.dots i{transition:.3s}
+.gold{animation:sheen 5s ease-in-out infinite alternate}
+.hero::before{animation:float 9s ease-in-out infinite alternate}
+.btn:not(.g)::after{content:"";position:absolute;top:0;bottom:0;width:40%;left:-60%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-20deg);animation:shine 4.5s ease-in-out infinite}
+.poster::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.2) 50%,transparent 65%);transform:translateX(-120%);transition:transform .8s}
+.card:hover .poster::before{transform:translateX(120%)}
+.card h3{transition:color .25s}
+.card:hover h3{color:var(--gold)}
+.rv{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  .rv{opacity:1;transform:none;transition:none}
+  .gold,.hero::before,.btn::after{animation:none}
+}
+#intro{transition:opacity .8s,visibility .8s}
+#intro .lg{opacity:0;transform:scale(.92);animation:rise 1.2s .2s cubic-bezier(.2,.7,.2,1) forwards}
+#intro .tg{opacity:0;animation:rise 1s .9s forwards}
+#intro .ln{opacity:0;animation:rise .6s .6s forwards}
+#intro .ln b{width:0;animation:fill 1.8s .8s ease forwards}
+#intro .btn{opacity:0;animation:rise .8s 1.8s forwards}
+#intro .sk{opacity:0;animation:rise .8s 2.1s forwards}
+@media (prefers-reduced-motion:reduce){
+  #intro *{animation-duration:.01s!important;animation-delay:0s!important}
+}
+.genres span{transition:.25s}
+footer .fl a{transition:.2s}
+#ov{transition:.35s}
+#sheet{transition:transform .45s cubic-bezier(.2,.8,.2,1)}
+.eps button{transition:.2s}
+.arr button{transition:.2s}
+.card .frame{transition:transform .3s,box-shadow .3s}
+.card:active .frame,.card:hover .frame{transform:translateY(-5px);box-shadow:0 18px 30px -14px rgba(233,196,106,.55)}
+.sw2::after{transition:.25s}
+#toast{transition:.3s}
+.gold{animation:none}
+.hero::before{animation:none}
+.poster::before{display:none}
+.rv{transform:translateY(12px);transition:opacity .5s ease,transform .5s ease}
+.rv.in{transform:none}
+.btn:not(.g)::after{left:0;animation:shine2 4.5s ease-in-out infinite}
+#sheet{will-change:transform}
+@media (pointer:fine){
+  .gold{animation:sheen 5s ease-in-out infinite alternate}
+  .poster::before{display:block}
+}
+@media (hover:none){
+  .card:hover .frame{transform:none;box-shadow:none}
+  .card:hover h3{color:inherit}
+}
+@media (prefers-reduced-motion:reduce){
+  .btn::after{animation:none}
+}
+.row{scroll-behavior:smooth}
