@@ -1,0 +1,13 @@
+/* HERO section design */
+.hero{margin:16px 16px 0;position:relative;overflow:hidden;border-radius:21px;padding:26px 20px 22px;background:radial-gradient(75% 90% at 100% 0%,rgba(255,77,109,.3),transparent 62%),radial-gradient(60% 70% at 0% 100%,rgba(233,196,106,.2),transparent 65%),#0b0b13;color:#f5f1e8}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:.66rem;font-weight:600;letter-spacing:.2em;color:var(--gold);margin-bottom:12px}
+.eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--rose);box-shadow:0 0 12px var(--rose)}
+.hero h1{font-size:clamp(1.9rem,8vw,2.8rem);font-weight:800;line-height:1.03;letter-spacing:-.035em;margin-bottom:12px}
+.hero p{font-size:.84rem;opacity:.7;margin-bottom:18px;max-width:380px}
+.hero{min-height:300px}
+.dots{display:flex;gap:6px;margin-top:18px}
+.dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25);cursor:pointer}
+.dots i.on{width:22px;border-radius:4px;background:var(--gold)}
+.hero::before{content:"";position:absolute;width:260px;height:260px;right:-80px;top:-80px;border-radius:50%;background:radial-gradient(circle,rgba(255,77,109,.35),transparent 70%);filter:blur(20px)}
+.hero>*{position:relative}
+.hero::before{filter:none;background:radial-gradient(circle,rgba(255,77,109,.3),transparent 70%)}
