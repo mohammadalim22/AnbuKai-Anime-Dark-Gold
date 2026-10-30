@@ -19,7 +19,9 @@ var KN=ls('akK')||{},HOME=null,TOK=0,VIEW='home',RES=[],ST_T=0,akExtra=-1;
 
 /* inject grid css (style.css e kichu add korte hobe na) */
 var sty=document.createElement('style');
-sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px;padding:16px 16px 10px}@media(min-width:700px){.gv{grid-template-columns:repeat(5,minmax(0,1fr))}}@media(min-width:1000px){.gv{grid-template-columns:repeat(7,minmax(0,1fr))}}.gv .card{flex:none}.dock a{cursor:pointer}';
+sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px;padding:16px 16px 10px}@media(min-width:700px){.gv{grid-template-columns:repeat(5,minmax(0,1fr))}}@media(min-width:1000px){.gv{grid-template-columns:repeat(7,minmax(0,1fr))}}.gv .card{flex:none}.dock a{cursor:pointer}'
++'.sh-top.pl{position:sticky;top:0;z-index:6}'
++'@media(max-width:699px){#sheet{left:0;top:0;bottom:0;width:100%;max-height:none;height:100vh;height:100dvh;transform:translateY(105%);border:0;border-radius:0}#sheet.on{transform:translateY(0)}#sheet .sh-top,#sheet .sh-top.pl{border-radius:0}}';
 document.head.appendChild(sty);
 
 function gql(q,v){
