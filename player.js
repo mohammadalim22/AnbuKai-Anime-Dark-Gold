@@ -9,9 +9,8 @@ document.querySelectorAll('.bm').forEach(function(b){
 var SH={};
 var PG=100;
 
-// 🚨 তোমার API-এর streams অ্যারে থেকে লিংক নেওয়ার ফাংশন 🚨
+// 🚨 API থেকে স্ট্রিম লিংক বের করার ফাংশন 🚨
 async function getStream(anilistId, episode, type){
-  // একাধিক সার্ভারের লিস্ট (যেকোনো একটা কাজ করলেই হবে)
   const providers = ["mkissa", "anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves"];
   const baseUrl = "https://anivexa-api-wi89.onrender.com";
   const audio = type === 'dub' ? 'dub' : 'sub';
@@ -23,20 +22,16 @@ async function getStream(anilistId, episode, type){
       const apiUrl = `${baseUrl}/watch/${provider}/${anilistId}/${audio}/${epId}`;
       
       const response = await fetch(apiUrl);
-      
-      // যদি সার্ভার রেসপন্স 404 বা এরর দেয়, তবে পরের সার্ভারে যাবে
       if (!response.ok) continue; 
 
       const data = await response.json();
       
-      // 🚨 এখানেই ফিক্স করা হয়েছে (streams এবং sources দুটোই চেক করবে) 🚨
+      // 🚨 streams অথবা sources দুটোই চেক করবে 🚨
       let streamList = data.streams || data.sources;
       
       if (streamList && streamList.length > 0) {
-        // m3u8 লিংক থাকলে সেটাই আগে নিবে (HLS)
         const m3u8 = streamList.find(s => s.url && s.url.includes('.m3u8'));
         if (m3u8) return m3u8.url;
-        // অন্যথায় প্রথম লিংকটাই নিবে
         if (streamList[0].url) return streamList[0].url;
       }
       
@@ -46,7 +41,7 @@ async function getStream(anilistId, episode, type){
       console.log(`Server ${provider} failed, trying next...`);
     }
   }
-  return null; // কোনো সার্ভারেই না পেলে null
+  return null;
 }
 
 function hasVid(n){var a=VIDEOS[n];return !!a&&Object.keys(a).length>0}
@@ -114,7 +109,6 @@ async function paint(){
   t.removeAttribute('style');
   t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
   
-  // HLS ভিডিও প্লেয়ার চালু করা
   if(u && u.includes('.m3u8')){
     setTimeout(function(){
       var video = document.getElementById('hls-video');
