@@ -8,6 +8,31 @@ document.querySelectorAll('.bm').forEach(function(b){
 });
 var SH={};
 var PG=100;
+
+// 🚨 তোমার নিজের Anivexa API ব্যবহার করার ফাংশন 🚨
+async function getStream(anilistId, episode, type){
+  try {
+    const baseUrl = "https://anivexa-api-wi89.onrender.com";
+    
+    // ⚠️ মনে রাখবেন: তোমার API-এর রাউট যদি ভিন্ন হয় (যেমন: /stream?id=..), তবে এই লাইনটি পরিবর্তন করতে হবে।
+    const apiUrl = `${baseUrl}/anime/${anilistId}/${episode}`; 
+    
+    const response = await fetch(apiUrl);
+    if (!response.ok) throw new Error('API fetch failed');
+    
+    const data = await response.json();
+    
+    if (data.url) return data.url;
+    if (data.sources && data.sources.length > 0) {
+      return data.sources[0].url;
+    }
+    return null;
+  } catch (error) {
+    console.error('Anivexa API Error:', error);
+    return null;
+  }
+}
+
 function hasVid(n){var a=VIDEOS[n];return !!a&&Object.keys(a).length>0}
 function vurl(n,s,e,l,v){var a=VIDEOS[n],x=a&&a[s]&&a[s][e]&&a[s][e][l];return x&&x[v]||''}
 function cu(u){return encodeURI(u).replace(/[()']/g,function(c){return '%'+c.charCodeAt(0).toString(16)})}
@@ -32,28 +57,22 @@ async function paint(){
   document.getElementById('eps').innerHTML=o;mlbtn();cmt();
   if(!SH.play)return;
 
-  // প্রথমে স্ট্যাটিক ভিডিও চেক
+  // স্ট্যাটিক ভিডিও চেক
   var u = vurl(a[1],SH.s,SH.e,SH.l,SH.v) || vurl(a[1],SH.s,SH.e,SH.l,1-SH.v);
   var b;
 
   if(!u){
-    // স্ট্যাটিক না পেলে Anivexa থেকে আনার চেষ্টা
+    // API থেকে ভিডিও লোড
     t.className='sh-top pl';
     t.removeAttribute('style');
     t.innerHTML = '<div class="nov"><b>⏳</b><span>Loading stream...</span><small>Please wait</small></div><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
 
-    try {
-      // 🚨 ফিক্স করা হয়েছে: a[10] হলো AniList ID 🚨
-      var anilistId = a[10] || a.id || null;
-
-      if(anilistId && typeof getStream === 'function'){
-        var streamUrl = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
-        if(streamUrl){
-          u = streamUrl;
-        }
+    var anilistId = a[10] || a.id || null; // AniList ID
+    if(anilistId){
+      var streamUrl = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
+      if(streamUrl){
+        u = streamUrl;
       }
-    } catch(err){
-      console.log('Anivexa load error', err);
     }
   }
 
