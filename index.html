@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AnbuKai Anime – Your Anime World</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700;800&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2048%2048%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f7e6b0%22/%3E%3Cstop%20offset%3D%22.55%22%20stop-color%3D%22%23e9c46a%22/%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23b9852a%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath%20d%3D%22M24%202.5l19.5%2011.2v22.6L24%2047.5%204.5%2036.3V13.7z%22%20fill%3D%22%230b0b13%22%20stroke%3D%22url%28%23g%29%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M24%2010.5L34.5%2036h-5.2L24%2022.6%2018.7%2036h-5.2z%22%20fill%3D%22url%28%23g%29%22/%3E%3Ccircle%20cx%3D%2224%22%20cy%3D%2232%22%20r%3D%222.8%22%20fill%3D%22%23ff4d6d%22/%3E%3C/svg%3E">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="akg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7e6b0"/><stop offset=".55" stop-color="#e9c46a"/><stop offset="1" stop-color="#b9852a"/></linearGradient></defs><symbol id="ak" viewBox="0 0 48 48"><path d="M24 2.5l19.5 11.2v22.6L24 47.5 4.5 36.3V13.7z" fill="#0b0b13" stroke="url(#akg)" stroke-width="2"/><path d="M24 10.5L34.5 36h-5.2L24 22.6 18.7 36h-5.2z" fill="url(#akg)"/><circle cx="24" cy="32" r="2.8" fill="#ff4d6d"/></symbol></svg>
+<div id="intro"><div class="lg"><svg class="mk" viewBox="0 0 48 48" aria-hidden="true"><use href="#ak"/></svg><span class="wm"><span class="nm"><span class="gold">Anbu</span>Kai</span><small>ANIME</small></span></div><div class="tg">YOUR ANIME WORLD</div><div class="ln"><b></b></div><button class="btn" id="enter">Enter Website →</button><button class="sk" id="skip">Don’t show this intro again</button></div>
+<script src="intro.js"></script>
+<header>
+  <div class="logo brand"><svg class="mk" viewBox="0 0 48 48" aria-hidden="true"><use href="#ak"/></svg><span class="wm"><span class="nm"><span class="gold">Anbu</span>Kai</span><small>ANIME</small></span></div>
+  <div class="search"><span>🔍</span><input id="q" autocomplete="off" placeholder="Search anime..." aria-label="Search"><div id="sr"></div></div>
+<button class="ub" id="ub" onclick="userBtn()">Login</button></header>
+
+<div class="frame" style="margin:16px 16px 0">
+  <div class="hero" id="hero" style="margin:0"></div>
+</div>
+
+<div class="genres" id="genres"></div>
+<div id="app"></div>
+<footer><div class="logo brand"><svg class="mk" viewBox="0 0 48 48" aria-hidden="true"><use href="#ak"/></svg><span class="wm"><span class="nm"><span class="gold">Anbu</span>Kai</span><small>ANIME</small></span></div><p>Your Anime World</p><div class="fl"><a href="#">Home</a><a href="#">Anime</a><a href="#">Movies</a><a href="#">Contact</a></div><small>© AnbuKai Anime</small></footer>
+
+<div id="ov" onclick="closeSheet()"></div>
+<div id="sheet" role="dialog" aria-modal="true"></div>
+<div id="mw"><div id="mc"></div></div>
+<div id="toast"></div>
+<nav class="dock">
+  <a class="on" href="#"><b>⌂</b>Home</a><a href="#"><b>✦</b>Anime</a><a href="#"><b>▣</b>Movies</a><a href="#"><b>☰</b>My List</a>
+</nav>
+
+<script src="data.js"></script>
+<script src="home.js"></script>
+<script src="videos.js"></script>
+<script src="auth.js"></script>
+<script src="player.js"></script>
+</body>
+  </html>
