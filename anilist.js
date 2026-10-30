@@ -54,7 +54,6 @@ function cvt(m){
   a;
   if(d.length>260)d=d.slice(0,257)+'...';
   EPN[t]=ep;
-  // Index: 0=rating, 1=title, 2=meta, 3=cover, 4=banner, 5=episodes, 6=seasons, 7=desc, 8=format, 9=duration, 10=anilistId
   a=[r,t,y+' • '+(ST[m.status]||m.status)+' • '+(m.genres&&m.genres[0]||'Anime'),m.coverImage&&m.coverImage.large||'',m.bannerImage||'',ep,1,d,fm(m.format),m.duration||0, m.id];
   KN[t]=a;
   return a;
