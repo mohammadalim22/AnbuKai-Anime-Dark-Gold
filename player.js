@@ -9,23 +9,43 @@ document.querySelectorAll('.bm').forEach(function(b){
 var SH={};
 var PG=100;
 
-// 🚨 তোমার নিজের Anivexa API ব্যবহার করার ফাংশন 🚨
+// 🚨 তোমার নিজের Anivexa API ব্যবহার করার সঠিক ফাংশন 🚨
 async function getStream(anilistId, episode, type){
   try {
     const baseUrl = "https://anivexa-api-wi89.onrender.com";
+    const audio = type === 'dub' ? 'dub' : 'sub';
     
-    // ⚠️ মনে রাখবেন: তোমার API-এর রাউট যদি ভিন্ন হয় (যেমন: /stream?id=..), তবে এই লাইনটি পরিবর্তন করতে হবে।
-    const apiUrl = `${baseUrl}/anime/${anilistId}/${episode}`; 
+    // এপিসোড লিস্ট থেকে এপিসোড আইডি বের করার চেষ্টা
+    let epId = `anivexa-${episode}`; // ডিফল্ট ফরম্যাট
     
-    const response = await fetch(apiUrl);
-    if (!response.ok) throw new Error('API fetch failed');
+    try {
+      const epRes = await fetch(`${baseUrl}/anime/anivexa/episodes/${anilistId}`);
+      if (epRes.ok) {
+        const epData = await epRes.json();
+        // API রেসপন্স অনুযায়ী এপিসোড আইডি খোঁজা
+        if (epData.anivexa && epData.anivexa[audio]) {
+          const epList = epData.anivexa[audio];
+          const found = epList.find(e => e.number === episode);
+          if (found) epId = found.id;
+        }
+      }
+    } catch(e) { console.log('Episode fetch skipped, using default ID'); }
+
+    // সরাসরি স্ট্রিম লিংক আনা
+    const streamRes = await fetch(`${baseUrl}/anime/anivexa/watch/anivexa/${anilistId}/${audio}/${epId}`);
+    if (!streamRes.ok) throw new Error('Stream fetch failed');
     
-    const data = await response.json();
+    const data = await streamRes.json();
     
-    if (data.url) return data.url;
+    // ভিডিও লিংক রিটার্ন করা
     if (data.sources && data.sources.length > 0) {
+      // m3u8 লিংক হলে সেটাই আগে নিবে
+      const m3u8 = data.sources.find(s => s.url.includes('.m3u8'));
+      if (m3u8) return m3u8.url;
       return data.sources[0].url;
     }
+    if (data.url) return data.url;
+    
     return null;
   } catch (error) {
     console.error('Anivexa API Error:', error);
@@ -57,7 +77,7 @@ async function paint(){
   document.getElementById('eps').innerHTML=o;mlbtn();cmt();
   if(!SH.play)return;
 
-  // স্ট্যাটিক ভিডিও চেক
+  // স্ট্যাটিক ভিডিও চেক (যদি থাকে)
   var u = vurl(a[1],SH.s,SH.e,SH.l,SH.v) || vurl(a[1],SH.s,SH.e,SH.l,1-SH.v);
   var b;
 
