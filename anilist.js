@@ -6,7 +6,7 @@
 var FIELDS='id title{romaji english}averageScore seasonYear startDate{year}status genres episodes coverImage{large}bannerImage description(asHtml:false)nextAiringEpisode{episode}';
 var FR='fragment F on Media{'+FIELDS+'}';
 var HQ='query{t:Page(perPage:20){media(type:ANIME,sort:TRENDING_DESC,isAdult:false){...F}}p:Page(perPage:20){media(type:ANIME,sort:POPULARITY_DESC,isAdult:false){...F}}r:Page(perPage:20){media(type:ANIME,sort:SCORE_DESC,isAdult:false){...F}}}'+FR;
-var BQ='query($p:Int,$f:[MediaFormat],$g:String,$s:[MediaSort]){Page(page:$p,perPage:30){pageInfo{hasNextPage}media(type:ANIME,format_in:$f,genre:$g,sort:$s,isAdult:false){...F}}}'+FR;
+var BQ='query($p:Int,$f:[MediaFormat],$g:String,$q:String,$s:[MediaSort]){Page(page:$p,perPage:30){pageInfo{hasNextPage}media(type:ANIME,format_in:$f,genre:$g,search:$q,sort:$s,isAdult:false){...F}}}'+FR;
 var SQ='query($s:String){Page(perPage:8){media(type:ANIME,search:$s,sort:SEARCH_MATCH,isAdult:false){...F}}}'+FR;
 var ST={RELEASING:'ONGOING',FINISHED:'COMPLETED',NOT_YET_RELEASED:'UPCOMING',CANCELLED:'CANCELLED',HIATUS:'HIATUS'};
 var KN=ls('akK')||{},HOME=null,TOK=0,VIEW='home',RES=[],ST_T=0,akExtra=-1;
@@ -94,7 +94,7 @@ function browse(o){
   var gv=document.getElementById('gv'),gs=document.getElementById('gs'),lm=document.getElementById('lm');
   function more(){
     pg++;gs.textContent='Loading...';lm.style.display='none';
-    gql(BQ,{p:pg,f:o.f||null,g:o.g||null,s:['POPULARITY_DESC']}).then(function(d){
+    gql(BQ,{p:pg,f:o.f||null,g:o.g||null,q:o.q||null,s:[o.q?'SEARCH_MATCH':'POPULARITY_DESC']}).then(function(d){
       if(tok!==TOK)return;
       var P=d.Page,h='';
       P.media.forEach(function(m){var a=cvt(m);h+=cardH(a,ALL.push(a)-1)});
@@ -155,6 +155,17 @@ function openEntry(a){
 }
 window.akPick=function(i){var a=RES[i];if(!a)return;sr.className='';nq.value='';sr.innerHTML='';openEntry(a)};
 window.openByName=function(n){var a=KN[n]||ALL.filter(function(x){return x[1]===n})[0];if(a){closeM();openEntry(a)}};
+/* Go/Enter ba 🔍 tap korle full search result page */
+function doSearch(){
+  var v=nq.value.trim();
+  if(!v){nq.focus();return}
+  clearTimeout(ST_T);sr.className='';sr.innerHTML='';nq.blur();
+  browse({label:'SEARCH',title:'Results for "'+v+'"',q:v,chips:0,dock:-1});
+}
+nq.setAttribute('enterkeyhint','search');
+nq.addEventListener('keydown',function(e){if(e.key==='Enter'||e.keyCode===13){e.preventDefault();doSearch()}});
+var mg=document.querySelector('.search span');
+if(mg){mg.style.cursor='pointer';mg.onclick=doSearch}
 var oc=closeSheet;
 window.closeSheet=function(){oc();if(akExtra>-1&&akExtra===ALL.length-1)ALL.pop();akExtra=-1};
 
