@@ -22,23 +22,25 @@ var sty=document.createElement('style');
 sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px;padding:16px 16px 10px}@media(min-width:700px){.gv{grid-template-columns:repeat(5,minmax(0,1fr))}}@media(min-width:1000px){.gv{grid-template-columns:repeat(7,minmax(0,1fr))}}.gv .card{flex:none}.dock a{cursor:pointer}'
 +'.sh-top.pl{position:sticky;top:0;z-index:6}'
 +'@media(max-width:699px){#sheet{left:0;top:0;bottom:0;width:100%;max-height:none;height:100vh;height:100dvh;transform:translateY(105%);border:0;border-radius:0}#sheet.on{transform:translateY(0)}#sheet .sh-top,#sheet .sh-top.pl{border-radius:0}}'
-+'.akh{position:relative;min-height:350px;border-radius:21px;overflow:hidden;background:#0c0c14;color:#f5f1e8}'
++'.akh{position:relative;border-radius:21px;overflow:hidden;background:#0c0c14;color:#f5f1e8}'
 +'.akh-bg{position:absolute;inset:0;background-size:cover;background-position:center;animation:akf .6s ease}'
 +'@keyframes akf{from{opacity:0}to{opacity:1}}'
-+'.akh-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(6,6,10,.9),rgba(6,6,10,.45) 70%,rgba(6,6,10,.15)),linear-gradient(to top,rgba(6,6,10,.95),transparent 60%)}'
-+'.akh-c{position:relative;z-index:2;min-height:350px;padding:22px 22px 46px;display:flex;flex-direction:column;justify-content:flex-end}'
-+'.akh-sp{display:flex;align-items:center;gap:8px;font:700 .7rem Sora,sans-serif;letter-spacing:.2em;color:#e9c46a;margin-bottom:10px}'
-+'.akh-sp i{width:8px;height:8px;border-radius:50%;background:#ff4d6d}'
-+'.akh-t{font:800 1.7rem/1.12 Sora,sans-serif;letter-spacing:-.03em;margin-bottom:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
-+'.akh-m{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}'
-+'.akh-m span{padding:4px 11px;border-radius:8px;font-size:.74rem;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.14)}'
++'.akh-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(6,6,10,.94),rgba(6,6,10,.78) 55%,rgba(6,6,10,.55))}'
++'.akh-c{position:relative;z-index:2;display:flex;gap:12px;align-items:center;padding:14px 14px 2px}'
++'.akh-p{flex:none;width:92px;aspect-ratio:2/3;object-fit:cover;border-radius:12px;border:1px solid rgba(233,196,106,.5);box-shadow:0 8px 20px -6px rgba(0,0,0,.7);background:#14141f}'
++'.akh-i{min-width:0;flex:1}'
++'.akh-sp{display:flex;align-items:center;gap:6px;font:700 .6rem Sora,sans-serif;letter-spacing:.16em;color:#e9c46a;margin-bottom:5px}'
++'.akh-sp i{width:6px;height:6px;border-radius:50%;background:#ff4d6d}'
++'.akh-t{font:800 1.02rem/1.22 Sora,sans-serif;letter-spacing:-.02em;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}'
++'.akh-m{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}'
++'.akh-m span{padding:2px 8px;border-radius:7px;font-size:.66rem;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.14)}'
 +'.akh-m .r{color:#e9c46a;font-weight:700}'
-+'.akh-c p{font-size:.84rem;line-height:1.5;color:rgba(245,241,232,.8);margin-bottom:16px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}'
-+'.akh-b{display:flex;gap:10px;flex-wrap:wrap}'
++'.akh-b{display:flex;gap:6px;flex-wrap:wrap}'
++'.akh-b .btn{padding:8px 13px;font-size:.72rem}'
 +'.akh-b .btn.g{margin-left:0;color:#f5f1e8;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2)}'
-+'.akh-d{position:absolute;left:22px;bottom:16px;z-index:3;display:flex;gap:6px}'
-+'.akh-d span{width:8px;height:8px;border-radius:99px;background:rgba(255,255,255,.35);cursor:pointer;transition:width .25s}'
-+'.akh-d span.on{width:26px;background:#e9c46a}';
++'.akh-d{position:relative;z-index:3;display:flex;gap:6px;padding:8px 14px 12px}'
++'.akh-d span{width:7px;height:7px;border-radius:99px;background:rgba(255,255,255,.35);cursor:pointer;transition:width .25s}'
++'.akh-d span.on{width:22px;background:#e9c46a}';
 document.head.appendChild(sty);
 
 function gql(q,v){
@@ -221,7 +223,7 @@ function heroGo(i){HI=(i+HERO.length)%HERO.length;heroDraw()}
 function heroDraw(){
   var a=HERO[HI],m=a[2].split(' • '),i,dots='',inl=!!U&&U.list.indexOf(a[1])>-1;
   for(i=0;i<HERO.length;i++)dots+='<span class="'+(i===HI?'on':'')+'" onclick="akHG('+i+')"></span>';
-  document.getElementById('akh').innerHTML='<div class="akh-bg" style="background-image:url('+cu(a[4])+')"></div><div class="akh-shade"></div><div class="akh-c"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><p>'+esc(a[7]||m[2]||'')+'</p><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div><div class="akh-d">'+dots+'</div>';
+  document.getElementById('akh').innerHTML='<div class="akh-bg" style="background-image:url('+cu(a[4])+')"></div><div class="akh-shade"></div><div class="akh-c">'+(a[3]?'<img class="akh-p" alt="" src="'+esc(a[3])+'">':'')+'<div class="akh-i"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div></div><div class="akh-d">'+dots+'</div>';
 }
 window.akHG=heroGo;
 window.akHP=function(){openEntry(HERO[HI]);play()};
