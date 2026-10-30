@@ -16,12 +16,7 @@ document.getElementById('genres').innerHTML=GN.map(function(g,i){return '<span c
 document.querySelectorAll('#genres span').forEach(function(s){s.onclick=function(){document.querySelectorAll('#genres span').forEach(function(x){x.classList.remove('on')});s.classList.add('on')}});
 
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-function openSheet(i){
-  var a=ALL[i],m=a[2].split(' • '),c=C[i%5],sh=document.getElementById('sheet'),eps='';
-  for(var k=1;k<=12;k++)eps+='<button onclick="watch('+i+','+k+')">'+k+'</button>';
-  sh.innerHTML='<div class="sh-top" id="shtop" style="background:radial-gradient(85% 70% at 70% 0%,rgba('+c+',.5),transparent 70%),radial-gradient(60% 50% at 0% 100%,rgba(233,196,106,.2),transparent 70%),#0c0c14"><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button></div><div class="sh-b"><div class="chips"><span class="r">★ '+a[0]+'</span>'+m.map(function(t){return '<span>'+esc(t)+'</span>'}).join('')+'</div><h2>'+esc(a[1])+'</h2><div><button class="btn" onclick="watch('+i+',1)">▶ Watch Now</button><button class="btn g">+ My List</button></div><div id="np"></div><p></p><h4>EPISODES</h4><div class="eps">'+eps+'</div></div>';
-  sh.classList.remove('pm');sh.scrollTop=0;sh.classList.add('on');document.getElementById('ov').classList.add('on');document.body.style.overflow='hidden';
-}
+/* openSheet() ekhon player.js e ache */
 function closeSheet(){document.querySelectorAll('#sheet video,#sheet iframe').forEach(function(x){x.remove()});document.getElementById('sheet').classList.remove('on');document.getElementById('ov').classList.remove('on');document.body.style.overflow=''}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSheet()});
 var q=document.getElementById('q'),sr=document.getElementById('sr');
