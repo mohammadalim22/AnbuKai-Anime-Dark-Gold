@@ -5,7 +5,7 @@ async function getStream(anilistId, episode, type = "sub") {
     const providers = ["reanime", "anikoto", "anizone", "aniwaves"];
 
     for (const provider of providers) {
-      const url = `\( {ANIVEXA_API}/watch/ \){provider}/\( {anilistId}/ \){type}/${episode}`;
+      const url = ANIVEXA_API + "/watch/" + provider + "/" + anilistId + "/" + type + "/" + episode;
       
       const res = await fetch(url);
       if (!res.ok) continue;
