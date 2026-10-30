@@ -20,23 +20,61 @@ function play(k){if(k){SH.e=k;SH.pg=Math.floor((k-1)/PG)}SH.play=1;paint()}
 function eN(){return EPN[ALL[SH.i][1]]||12}
 function mlbtn(){var b=document.getElementById('ml');if(b)b.textContent=U&&U.list.indexOf(ALL[SH.i][1])>-1?'✓ In My List':'+ My List'}
 function toggleList(n){if(!U){authView('in');toast('Login to use My List');return}var k=U.list.indexOf(n);if(k>-1)U.list.splice(k,1);else U.list.push(n);save();decorate();mlbtn()}
-function paint(){var a=ALL[SH.i],n=eN(),ns=SEASONS[a[1]]||3,sh=document.getElementById('sheet'),t=document.getElementById('shtop'),i,o='',rg='',z,pg=Math.min(SH.pg||0,Math.floor((n-1)/PG));
-document.getElementById('eh').style.display=SH.play?'':'none';
-if(!SH.play){document.getElementById('ctl').innerHTML='';document.getElementById('eps').innerHTML='';document.getElementById('cm').innerHTML='';document.getElementById('np').innerHTML='';mlbtn();return}
-for(i=1;i<=ns;i++)o+='<option value="'+i+'"'+(i===SH.s?' selected':'')+'>Season '+i+'</option>';
-if(n>PG){for(z=0;z*PG<n;z++)rg+='<option value="'+z+'"'+(z===pg?' selected':'')+'>Ep '+(z*PG+1)+'–'+Math.min(n,(z+1)*PG)+'</option>';rg='<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">'+rg+'</select>'}
-document.getElementById('ctl').innerHTML='<select class="sel" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;paint()" aria-label="Season">'+o+'</select><div class="seg">'+LANGS.map(function(x){return '<button class="'+(x[0]===SH.l?'on':'')+'" onclick="SH.l=\''+x[0]+'\';paint()">'+x[1]+'</button>'}).join('')+'</div><div class="seg">'+[0,1].map(function(v){return '<button class="'+(v===SH.v?'on':'')+'" onclick="SH.v='+v+';paint()">Server 0'+(v+1)+'</button>'}).join('')+'</div>'+rg;
-o='';for(i=pg*PG+1;i<=Math.min(n,pg*PG+PG);i++)o+='<button class="'+(SH.play&&i===SH.e?'on':'')+'" onclick="play('+i+')">'+i+'</button>';
-document.getElementById('eps').innerHTML=o;mlbtn();cmt();
-if(!SH.play)return;
-var u=vurl(a[1],SH.s,SH.e,SH.l,SH.v)||vurl(a[1],SH.s,SH.e,SH.l,1-SH.v),b;
-if(!u)b='<div class="nov"><b>▶</b><span>'+esc(a[1])+' · S'+SH.s+' E'+SH.e+'</span><small>'+SH.l.toUpperCase()+' · Server 0'+(SH.v+1)+' · Video link goes here</small></div>';
-else if(/\.(mp4|webm|ogg)(\?|$)/i.test(u))b='<video src="'+esc(u)+'" controls playsinline autoplay onended="if(U&&U.prefs.auto&&SH.e<eN())play(SH.e+1)"></video>';
-else b='<iframe src="'+esc(u)+'" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>';
-t.className='sh-top pl';t.removeAttribute('style');t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
-document.getElementById('np').innerHTML='<div class="np"><span>▶ S'+SH.s+' · Episode '+SH.e+'</span><div><button '+(SH.e<2?'disabled ':'')+'onclick="play('+(SH.e-1)+')">‹ Prev</button><button '+(SH.e>=n?'disabled ':'')+'onclick="play('+(SH.e+1)+')">Next ›</button></div></div>';
-sh.classList.add('pm');
-if(U){U.hist=U.hist.filter(function(h){return !(h.n===a[1]&&h.s===SH.s&&h.e===SH.e)});U.hist.unshift({n:a[1],s:SH.s,e:SH.e});U.hist=U.hist.slice(0,50);save()}}
+
+async function paint(){
+  var a=ALL[SH.i],n=eN(),ns=SEASONS[a[1]]||3,sh=document.getElementById('sheet'),t=document.getElementById('shtop'),i,o='',rg='',z,pg=Math.min(SH.pg||0,Math.floor((n-1)/PG));
+  document.getElementById('eh').style.display=SH.play?'':'none';
+  if(!SH.play){document.getElementById('ctl').innerHTML='';document.getElementById('eps').innerHTML='';document.getElementById('cm').innerHTML='';document.getElementById('np').innerHTML='';mlbtn();return}
+  for(i=1;i<=ns;i++)o+='<option value="'+i+'"'+(i===SH.s?' selected':'')+'>Season '+i+'</option>';
+  if(n>PG){for(z=0;z*PG<n;z++)rg+='<option value="'+z+'"'+(z===pg?' selected':'')+'>Ep '+(z*PG+1)+'–'+Math.min(n,(z+1)*PG)+'</option>';rg='<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">'+rg+'</select>'}
+  document.getElementById('ctl').innerHTML='<select class="sel" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;paint()" aria-label="Season">'+o+'</select><div class="seg">'+LANGS.map(function(x){return '<button class="'+(x[0]===SH.l?'on':'')+'" onclick="SH.l=\''+x[0]+'\';paint()">'+x[1]+'</button>'}).join('')+'</div><div class="seg">'+[0,1].map(function(v){return '<button class="'+(v===SH.v?'on':'')+'" onclick="SH.v='+v+';paint()">Server 0'+(v+1)+'</button>'}).join('')+'</div>'+rg;
+  o='';for(i=pg*PG+1;i<=Math.min(n,pg*PG+PG);i++)o+='<button class="'+(SH.play&&i===SH.e?'on':'')+'" onclick="play('+i+')">'+i+'</button>';
+  document.getElementById('eps').innerHTML=o;mlbtn();cmt();
+  if(!SH.play)return;
+
+  // প্রথমে স্ট্যাটিক ভিডিও চেক
+  var u = vurl(a[1],SH.s,SH.e,SH.l,SH.v) || vurl(a[1],SH.s,SH.e,SH.l,1-SH.v);
+  var b;
+
+  if(!u){
+    // স্ট্যাটিক না পেলে Anivexa থেকে আনার চেষ্টা
+    t.className='sh-top pl';
+    t.removeAttribute('style');
+    t.innerHTML = '<div class="nov"><b>⏳</b><span>Loading stream...</span><small>Please wait</small></div><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
+
+    try {
+      // AniList ID নেওয়ার চেষ্টা (যদি থাকে)
+      var anilistId = a[8] || a[5] || a.id || null;
+
+      if(anilistId && typeof getStream === 'function'){
+        var streamUrl = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
+        if(streamUrl){
+          u = streamUrl;
+        }
+      }
+    } catch(err){
+      console.log('Anivexa load error', err);
+    }
+  }
+
+  if(!u){
+    b='<div class="nov"><b>▶</b><span>'+esc(a[1])+' · S'+SH.s+' E'+SH.e+'</span><small>'+SH.l.toUpperCase()+' · Server 0'+(SH.v+1)+' · Video not found</small></div>';
+  }
+  else if(/\.(mp4|webm|ogg)(\?|$)/i.test(u) || u.includes('.m3u8')){
+    b='<video src="'+esc(u)+'" controls playsinline autoplay onended="if(U&&U.prefs.auto&&SH.e<eN())play(SH.e+1)"></video>';
+  }
+  else {
+    b='<iframe src="'+esc(u)+'" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>';
+  }
+
+  t.className='sh-top pl';
+  t.removeAttribute('style');
+  t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
+  document.getElementById('np').innerHTML='<div class="np"><span>▶ S'+SH.s+' · Episode '+SH.e+'</span><div><button '+(SH.e<2?'disabled ':'')+'onclick="play('+(SH.e-1)+')">‹ Prev</button><button '+(SH.e>=n?'disabled ':'')+'onclick="play('+(SH.e+1)+')">Next ›</button></div></div>';
+  sh.classList.add('pm');
+  if(U){U.hist=U.hist.filter(function(h){return !(h.n===a[1]&&h.s===SH.s&&h.e===SH.e)});U.hist.unshift({n:a[1],s:SH.s,e:SH.e});U.hist=U.hist.slice(0,50);save()}
+}
+
 function decorate(){document.querySelectorAll('.card').forEach(function(c,i){var a=ALL[i];if(!a)return;var p=c.querySelector('.poster'),b=c.querySelector('.bm');
 if(hasVid(a[1])&&!c.querySelector('.wbtn')){p.classList.add('hv');var w=document.createElement('button');w.className='wbtn';w.textContent='▶ Watch';w.onclick=function(e){e.stopPropagation();openSheet(i);play()};p.appendChild(w)}
 if(b){b.classList.toggle('on',!!U&&U.list.indexOf(a[1])>-1);b.onclick=function(e){e.stopPropagation();toggleList(a[1])}}})}
