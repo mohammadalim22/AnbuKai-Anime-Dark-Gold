@@ -8,7 +8,6 @@ document.querySelectorAll('.bm').forEach(function(b){
 });
 var SH={};
 var PG=100;
-var currentHlsHeaders = {}; // 🚨 হেডার সেভ করার জন্য
 
 async function fetchWithTimeout(url, options = {}) {
   const { timeout = 8000 } = options; 
@@ -24,8 +23,9 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
+// 🚨 API থেকে লিংক বের করার আপডেট করা ফাংশন 🚨
 async function getStream(anilistId, episode, type){
-  const providers = ["anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves", "mkissa"]; // mkissa বাদ দেওয়া হলো কারণ এটি ৩২ সেকেন্ড নেয়
+  const providers = ["anikoto", "reanime", "kaa", "senshi", "anizone", "aniwaves"]; 
   const baseUrl = "https://anivexa-api-wi89.onrender.com";
   const audio = type === 'dub' ? 'dub' : 'sub';
 
@@ -42,17 +42,25 @@ async function getStream(anilistId, episode, type){
       let streamList = data.streams || data.sources;
       
       if (streamList && streamList.length > 0) {
-        let streamObj = streamList.find(s => s.url && s.url.includes('.m3u8'));
-        if (!streamObj) streamObj = streamList[0]; // m3u8 না পেলে প্রথমটা নিবে
+        let streamObj = streamList.find(s => s.url && s.url.includes('.m3u8')) || streamList[0];
         
-        if (streamObj && streamObj.url) {
-          // 🚨 হেডারগুলো সেভ করে রাখা হচ্ছে (Referer, User-Agent ইত্যাদি) 🚨
-          currentHlsHeaders = streamObj.headers || {};
-          return streamObj.url;
+        if (streamObj) {
+          // 🚨 ১. আগে embedUrl চেক করবে (কারণ এটি 403 এরর এড়াতে সাহায্য করে) 🚨
+          if (streamObj.embedUrl) {
+            return { type: 'iframe', url: streamObj.embedUrl };
+          }
+          // ২. embedUrl না থাকলে m3u8 চেক করবে
+          if (streamObj.url && streamObj.url.includes('.m3u8')) {
+            return { type: 'hls', url: streamObj.url };
+          }
+          // ৩. অন্যথায় ডিরেক্ট ভিডিও লিংক
+          if (streamObj.url) {
+            return { type: 'video', url: streamObj.url };
+          }
         }
       }
       
-      if (data.url) return data.url;
+      if (data.url) return { type: 'video', url: data.url };
       
     } catch (error) {
       console.log(`Server ${provider} timeout/error. Trying next...`);
@@ -94,6 +102,7 @@ async function paint(){
 
   var u = vurl(a[1],SH.s,SH.e,SH.l,SH.v) || vurl(a[1],SH.s,SH.e,SH.l,1-SH.v);
   var b;
+  var streamResult = null;
 
   if(!u){
     t.className='sh-top pl';
@@ -102,15 +111,21 @@ async function paint(){
 
     var anilistId = a[10] || a.id || null;
     if(anilistId){
-      var streamUrl = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
-      if(streamUrl){
-        u = streamUrl;
+      streamResult = await getStream(anilistId, SH.e, SH.l === 'dub' ? 'dub' : 'sub');
+      if(streamResult){
+        u = streamResult.url;
       }
     }
+  } else {
+      streamResult = { type: 'video', url: u }; // যদি স্ট্যাটিক লিংক থাকে
   }
 
   if(!u){
     b='<div class="nov"><b>▶</b><span>'+esc(a[1])+' · S'+SH.s+' E'+SH.e+'</span><small>'+SH.l.toUpperCase()+' · Server 0'+(SH.v+1)+' · Video not found</small></div>';
+  }
+  else if(streamResult && streamResult.type === 'iframe'){
+    // 🚨 embedUrl হলে আইফ্রেমে চালাবে (403 এরর দূর করার জন্য) 🚨
+    b='<iframe src="'+esc(u)+'" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" style="width:100%; height:100%; border:none;"></iframe>';
   }
   else if(u.includes('.m3u8')){
     b='<video id="hls-video" controls playsinline autoplay onended="if(U&&U.prefs.auto&&SH.e<eN())play(SH.e+1)"></video>';
@@ -119,31 +134,20 @@ async function paint(){
     b='<video src="'+esc(u)+'" controls playsinline autoplay onended="if(U&&U.prefs.auto&&SH.e<eN())play(SH.e+1)"></video>';
   }
   else {
-    b='<iframe src="'+esc(u)+'" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>';
+    b='<iframe src="'+esc(u)+'" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" style="width:100%; height:100%; border:none;"></iframe>';
   }
 
   t.className='sh-top pl';
   t.removeAttribute('style');
   t.innerHTML=b+'<button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button>';
   
-  // 🚨 HLS ভিডিও প্লেয়ার চালু করা (হেডারসহ) 🚨
-  if(u && u.includes('.m3u8')){
+  // HLS ভিডিও প্লেয়ার চালু করা (শুধুমাত্র m3u8 হলে)
+  if(u && u.includes('.m3u8') && (!streamResult || streamResult.type !== 'iframe')){
     setTimeout(function(){
       var video = document.getElementById('hls-video');
       if(video && typeof Hls !== 'undefined'){
         if (Hls.isSupported()) {
-          var hls = new Hls({
-            // এই অংশটি Referer হেডার পাঠাবে, যা ৪০৩ এরর ঠিক করবে
-            xhrSetup: function(xhr, url) {
-              if (currentHlsHeaders) {
-                for (var key in currentHlsHeaders) {
-                  if (currentHlsHeaders.hasOwnProperty(key)) {
-                    xhr.setRequestHeader(key, currentHlsHeaders[key]);
-                  }
-                }
-              }
-            }
-          });
+          var hls = new Hls();
           hls.loadSource(u);
           hls.attachMedia(video);
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
