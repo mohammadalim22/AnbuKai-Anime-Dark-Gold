@@ -1544,6 +1544,7 @@ function cmt() {
   var html =
     '<h4>COMMENTS · S' + SH.s +
     ' E' + SH.e +
+
     ' <span class="cnt">' +
     list.length +
     '</span></h4>';
@@ -1576,9 +1577,7 @@ function cmt() {
           '<div>' +
 
             '<b>' + esc(comment.n) + '</b>' +
-
             '<small>' + ago(comment.t) + '</small>' +
-
             '<p>' + esc(comment.x) + '</p>' +
 
             '<button class="lk' +
