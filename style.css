@@ -236,3 +236,8 @@ body::after{display:none}
 .poster .rate,.poster .bm,.poster .nw,.poster .wbtn{z-index:3}
 .poster .pi~.l{display:none}
 .sh-b p.ds{font-size:.82rem;color:var(--muted);margin:0 0 16px;line-height:1.5}
+
+/* 🚨 ভিডিও প্লেয়ারের ভেতরের X বাটন লুকানোর জন্য 🚨 */
+.sh-top.pl .sh-x {
+    display: none !important;
+}
