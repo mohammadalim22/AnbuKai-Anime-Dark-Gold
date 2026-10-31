@@ -1,13 +1,10 @@
 /* =====================================================
-   COMPLETE player.js REPLACEMENT
+   COMPLETE player.js
 
-   Uses the existing site's:
+   Requires your existing HTML, CSS, data and utilities:
    ALL, VIDEOS, EPN, SEASONS, LANGS, C, U, USERS,
    DP, esc, ls, av, save, toast, authView,
    closeSheet, closeM, ub, applyTheme.
-
-   API route format follows Anivexa documentation.
-   No claim of live API/browser playback verification.
    ===================================================== */
 
 var SH = {};
@@ -28,7 +25,6 @@ var activeHls = null;
 var activePlayback = null;
 var playerRun = 0;
 var playbackKey = '';
-
 var hlsLibraryPromise = null;
 
 /* ================= GENERAL HELPERS ================= */
@@ -67,10 +63,6 @@ function safeStreamUrl(value) {
   }
 
   try {
-    /*
-     * Resolve API-relative URLs against the API,
-     * not against the GitHub Pages frontend.
-     */
     var url = new URL(value, STREAM_API + '/');
 
     if (
@@ -86,6 +78,22 @@ function safeStreamUrl(value) {
   }
 }
 
+function getAnimeId(anime) {
+  if (!anime) return null;
+
+  var values = [anime[10], anime.id];
+
+  for (var i = 0; i < values.length; i++) {
+    var id = Number(values[i]);
+
+    if (Number.isInteger(id) && id > 0) {
+      return id;
+    }
+  }
+
+  return null;
+}
+
 function isHlsUrl(url) {
   return /\.m3u8(?:[?#]|$)/i.test(url);
 }
@@ -93,7 +101,6 @@ function isHlsUrl(url) {
 function inferStreamType(url, hint) {
   hint = String(hint || '').toLowerCase();
 
-  /* A playlist must never become an iframe. */
   if (isHlsUrl(url)) return 'hls';
 
   if (hint === 'iframe' || hint === 'embed') {
@@ -199,10 +206,6 @@ function normalizeStreams(data) {
       !!item.playlist_key ||
       !!item.playlistKey;
 
-    /*
-     * Anivexa may return embed, not only embedUrl.
-     * Explicit embed URLs are preferred.
-     */
     [
       item.embedUrl,
       item.embed_url,
@@ -238,10 +241,6 @@ function normalizeStreams(data) {
 
   visit(data, 0, false);
 
-  /*
-   * Explicit embeds first, then ordinary media.
-   * Special HLS is handled separately below.
-   */
   return result.sort(function (a, b) {
     var priority = {
       iframe: 0,
@@ -388,10 +387,6 @@ function playerIsCurrent(run) {
 function destroyPlayer() {
   var top = document.getElementById('shtop');
 
-  /*
-   * Remove event listeners before resetting media.
-   * Resetting a video can otherwise trigger stale errors.
-   */
   if (
     activePlayback &&
     activePlayback.mediaCleanup
@@ -555,10 +550,6 @@ async function mountStream(stream, session, provider) {
       ' · Embedded player · Error inside? Use Retry.'
     );
 
-    /*
-     * iframe.onload cannot prove video playback.
-     * Do not report this as verified playback.
-     */
     return {
       verified: false
     };
@@ -773,8 +764,8 @@ async function mountStream(stream, session, provider) {
         if (promise && promise.catch) {
           promise.catch(function () {
             /*
-             * Browser autoplay rejection is not a
-             * broken stream. User can press Play.
+             * Autoplay rejection is not necessarily
+             * a broken stream. User can press Play.
              */
           });
         }
@@ -835,10 +826,6 @@ async function startPlayback(session) {
       return false;
     }
 
-    /*
-     * This player does not implement custom manifest
-     * decryption. Prefer the provider's returned embed.
-     */
     if (
       stream.specialHls ||
       (
@@ -929,7 +916,7 @@ async function startPlayback(session) {
     }
   }
 
-  var anilistId = anime[10] || anime.id;
+  var anilistId = getAnimeId(anime);
 
   if (!anilistId) {
     if (playerIsCurrent(run)) {
@@ -939,6 +926,7 @@ async function startPlayback(session) {
         true
       );
     }
+
     return;
   }
 
@@ -948,14 +936,6 @@ async function startPlayback(session) {
   for (var p = 0; p < providers.length; p++) {
     var provider = providers[p];
 
-    /*
-     * Two attempts:
-     * 1. Normal request.
-     * 2. Fresh response after a short wait.
-     *
-     * This does not bypass upstream caching or
-     * repair a missing backend route.
-     */
     for (var attempt = 0; attempt < 2; attempt++) {
       if (!playerIsCurrent(run)) return;
 
@@ -978,6 +958,7 @@ async function startPlayback(session) {
 
       if (attempt > 0) {
         await delay(900);
+
         if (!playerIsCurrent(run)) return;
       }
 
@@ -1020,11 +1001,6 @@ async function startPlayback(session) {
           error.message
         );
 
-        /*
-         * Do not repeat a route/client error on the
-         * API itself. Media failure still gets the
-         * fresh-response retry above.
-         */
         if (
           /API HTTP (400|401|403|404|422)/.test(
             error.message
@@ -1453,10 +1429,6 @@ function paint(force) {
 
   mlbtn();
 
-  /*
-   * Preserve an unfinished comment when only the
-   * episode-list page changes.
-   */
   if (needsPlayback) {
     cmt();
   }
@@ -1479,25 +1451,54 @@ function decorate() {
       var poster = card.querySelector('.poster');
       var bookmark = card.querySelector('.bm');
 
-      if (
-        poster &&
-        hasVid(a[1]) &&
-        !card.querySelector('.wbtn')
-      ) {
-        poster.classList.add('hv');
+      /*
+       * Show Watch for:
+       * 1. Existing locally configured videos.
+       * 2. Anime with an AniList ID usable by the player.
+       *
+       * No API request is made just to draw the button.
+       */
+      var hasLocalVideo = hasVid(a[1]);
+      var canSearchApi = getAnimeId(a) !== null;
 
-        var watch = document.createElement('button');
+      var showWatch =
+        hasLocalVideo || canSearchApi;
 
-        watch.className = 'wbtn';
-        watch.textContent = '▶ Watch';
+      if (poster) {
+        var watch = poster.querySelector('.wbtn');
 
-        watch.onclick = function (event) {
-          event.stopPropagation();
-          openSheet(i);
-          play();
-        };
+        poster.classList.toggle('hv', showWatch);
 
-        poster.appendChild(watch);
+        if (showWatch) {
+          if (!watch) {
+            watch = document.createElement('button');
+            watch.className = 'wbtn';
+            watch.type = 'button';
+
+            poster.appendChild(watch);
+          }
+
+          watch.textContent = '▶ Watch';
+
+          watch.setAttribute(
+            'aria-label',
+            'Watch ' + String(a[1] || 'anime')
+          );
+
+          watch.title = hasLocalVideo
+            ? 'Watch available video'
+            : 'Find a stream for this anime';
+
+          watch.onclick = function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            openSheet(i);
+            play();
+          };
+        } else if (watch) {
+          watch.remove();
+        }
       }
 
       if (bookmark) {
@@ -1507,7 +1508,9 @@ function decorate() {
         );
 
         bookmark.onclick = function (event) {
+          event.preventDefault();
           event.stopPropagation();
+
           toggleList(a[1]);
         };
       }
