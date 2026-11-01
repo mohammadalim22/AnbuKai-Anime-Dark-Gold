@@ -1,17 +1,17 @@
 /* =====================================================
-   COMPLETE player.js
+   COMPLETE player.js REPLACEMENT
 
-   Replace the entire old player.js with this file.
-   Do not append this to the previous code.
-   Do not add HTML script tags.
-
-   Requires your existing:
+   Requires the existing site's:
    ALL, VIDEOS, EPN, SEASONS, LANGS, C, U, USERS,
    DP, esc, ls, av, save, toast, authView,
    closeSheet, closeM, ub, applyTheme.
 
-   Hindi API integration follows its documented format.
-   Live API, CORS and playback have not been verified.
+   Important:
+   - A backend HTTP 500 is not repaired by frontend code.
+   - Provider names below come from the existing project.
+   - Their live availability has not been verified.
+   - Anivexa episode-ID format is retained from your code.
+   - Do not append this file to an older player version.
    ===================================================== */
 
 var SH = {};
@@ -33,24 +33,23 @@ var activeHls = null;
 var activePlayback = null;
 var playerRun = 0;
 var playbackKey = '';
-
 var hlsLibraryPromise = null;
 
 var hindiChoices = new Map();
 var hindiMetadata = new Map();
-var hindiRequests = new Map();
 var hindiCache = new Map();
+var hindiPending = new Map();
 
-var HINDI_CACHE_LIMIT = 50;
+var HINDI_CACHE_LIMIT = 40;
 
-/* ================= GENERAL HELPERS ================= */
+/* ================= DATA HELPERS ================= */
 
 function hasVid(name) {
-  var anime =
+  var item =
     typeof VIDEOS !== 'undefined' &&
     VIDEOS[name];
 
-  return !!anime && Object.keys(anime).length > 0;
+  return !!item && Object.keys(item).length > 0;
 }
 
 function vurl(name, season, episode, language, server) {
@@ -58,13 +57,13 @@ function vurl(name, season, episode, language, server) {
     typeof VIDEOS !== 'undefined' &&
     VIDEOS[name];
 
-  var entry =
+  var item =
     anime &&
     anime[season] &&
     anime[season][episode] &&
     anime[season][episode][language];
 
-  return entry && entry[server] || '';
+  return item && item[server] || '';
 }
 
 function cu(url) {
@@ -73,40 +72,10 @@ function cu(url) {
   });
 }
 
-function safeStreamUrl(value, base) {
-  if (
-    typeof value !== 'string' ||
-    !value.trim()
-  ) {
-    return '';
-  }
-
-  try {
-    var url = new URL(
-      value,
-      base || STREAM_API + '/'
-    );
-
-    if (
-      url.protocol !== 'https:' &&
-      url.protocol !== 'http:'
-    ) {
-      return '';
-    }
-
-    return url.href;
-  } catch (error) {
-    return '';
-  }
-}
-
 function getAnimeId(anime) {
   if (!anime) return null;
 
-  var values = [
-    anime[10],
-    anime.id
-  ];
+  var values = [anime[10], anime.id];
 
   for (var i = 0; i < values.length; i++) {
     var id = Number(values[i]);
@@ -119,6 +88,25 @@ function getAnimeId(anime) {
   return null;
 }
 
+function safeStreamUrl(value, base) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  try {
+    var url = new URL(
+      value,
+      base || STREAM_API + '/'
+    );
+
+    return /^https?:$/.test(url.protocol)
+      ? url.href
+      : '';
+  } catch (error) {
+    return '';
+  }
+}
+
 function inferStreamType(url, hint) {
   hint = String(hint || '').toLowerCase();
 
@@ -126,10 +114,7 @@ function inferStreamType(url, hint) {
     return 'hls';
   }
 
-  if (
-    hint === 'iframe' ||
-    hint === 'embed'
-  ) {
+  if (hint === 'iframe' || hint === 'embed') {
     return 'iframe';
   }
 
@@ -148,33 +133,19 @@ function inferStreamType(url, hint) {
   return 'iframe';
 }
 
-function delay(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
+function isHindi(language) {
+  return /^(hi|hindi)$/i.test(String(language));
 }
 
-function providerOrder(server) {
-  var first = Number(server) === 1
-    ? 'reanime'
-    : 'anikoto';
-
-  return [first].concat(
-    STREAM_PROVIDERS.filter(function (provider) {
-      return provider !== first;
-    })
-  );
-}
-
-function titleKey(name) {
-  return String(name || '')
+function titleKey(title) {
+  return String(title || '')
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
-function hindiKey(anime) {
+function animeKey(anime) {
   return (
     String(getAnimeId(anime) || '') +
     '|' +
@@ -182,51 +153,43 @@ function hindiKey(anime) {
   );
 }
 
-function isHindi(language) {
-  return /^(hi|hindi)$/i.test(
-    String(language)
-  );
-}
-
 function playerLanguages() {
-  var output = [
-    ['hi', 'Hindi']
-  ];
-
-  var seen = new Set([
-    'hi',
-    'hindi'
-  ]);
+  var output = [['hi', 'Hindi']];
+  var seen = new Set(['hi', 'hindi']);
 
   var existing =
     typeof LANGS !== 'undefined'
       ? LANGS
-      : [
-          ['sub', 'Sub'],
-          ['dub', 'Dub']
-        ];
+      : [['sub', 'Sub'], ['dub', 'Dub']];
 
-  existing.forEach(function (language) {
-    var key = String(language[0]).toLowerCase();
+  existing.forEach(function (item) {
+    var key = String(item[0]).toLowerCase();
 
     if (!seen.has(key)) {
       seen.add(key);
-      output.push(language);
+      output.push(item);
     }
   });
 
   return output;
 }
 
-function playbackIdentity() {
+function stateKey() {
   return [
     SH.i,
     SH.s,
     SH.e,
     SH.l,
-    SH.v,
-    SH.hsrc === null ? 'auto' : SH.hsrc
+    SH.provider || 'auto',
+    SH.src === null ? 'auto' : SH.src,
+    SH.v
   ].join('|');
+}
+
+function wait(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
 /* ================= NETWORK ================= */
@@ -236,10 +199,9 @@ async function fetchWithTimeout(url, options) {
 
   var controller = new AbortController();
   var settings = Object.assign({}, options);
-  var timeout = settings.timeout || 15000;
+  var timeout = settings.timeout || 18000;
 
   delete settings.timeout;
-
   settings.signal = controller.signal;
 
   var timer = setTimeout(function () {
@@ -253,45 +215,87 @@ async function fetchWithTimeout(url, options) {
   }
 }
 
-async function requestJson(url, fresh) {
-  var response = await fetchWithTimeout(url, {
-    timeout: 15000,
-    cache: fresh ? 'no-store' : 'default'
-  });
+async function requestJson(url, retryServerError) {
+  var maxAttempts = retryServerError ? 2 : 1;
 
-  if (!response.ok) {
-    throw new Error(
-      'API HTTP ' + response.status
-    );
+  for (var attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt) {
+      await wait(1200);
+    }
+
+    var response;
+
+    try {
+      response = await fetchWithTimeout(url, {
+        timeout: 18000,
+        cache: 'no-store'
+      });
+    } catch (error) {
+      var networkError = new Error(
+        (
+          error.name === 'AbortError'
+            ? 'API request timed out'
+            : 'API request failed: network or CORS'
+        ) +
+        ' · ' +
+        url
+      );
+
+      networkError.url = url;
+      throw networkError;
+    }
+
+    if (!response.ok) {
+      if (
+        response.status >= 500 &&
+        attempt + 1 < maxAttempts
+      ) {
+        continue;
+      }
+
+      var httpError = new Error(
+        'API HTTP ' +
+        response.status +
+        ' · ' +
+        url
+      );
+
+      httpError.status = response.status;
+      httpError.url = url;
+
+      throw httpError;
+    }
+
+    var data;
+
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new Error(
+        'API returned non-JSON content · ' + url
+      );
+    }
+
+    if (data && data.success === false) {
+      throw new Error(
+        String(
+          data.message ||
+          data.mmessage ||
+          'API reported failure'
+        ) +
+        ' · ' +
+        url
+      );
+    }
+
+    return data;
   }
-
-  var data;
-
-  try {
-    data = await response.json();
-  } catch (error) {
-    throw new Error(
-      'API returned non-JSON content'
-    );
-  }
-
-  if (data && data.success === false) {
-    throw new Error(
-      String(
-        data.message ||
-        data.mmessage ||
-        'API reported failure'
-      )
-    );
-  }
-
-  return data;
 }
 
-/* ================= STREAM RESPONSE ================= */
+/* ================= STREAM NORMALIZATION ================= */
 
 function normalizeStreams(data, base) {
-  var results = [];
+  var output = [];
   var seen = new Set();
 
   function add(value, hint, special, label) {
@@ -302,22 +306,21 @@ function normalizeStreams(data, base) {
     var key = type + ':' + url;
 
     if (seen.has(key)) return;
-
     seen.add(key);
 
-    results.push({
-      type: type,
+    output.push({
       url: url,
+      type: type,
       specialHls: !!special && type === 'hls',
-      label: label || ''
+      label: String(label || '')
     });
   }
 
-  function visit(item, depth, inherited, label) {
+  function visit(item, depth, inheritedSpecial, label) {
     if (!item || depth > 5) return;
 
     if (typeof item === 'string') {
-      add(item, '', inherited, label);
+      add(item, '', inheritedSpecial, label);
       return;
     }
 
@@ -326,7 +329,7 @@ function normalizeStreams(data, base) {
         visit(
           entry,
           depth + 1,
-          inherited,
+          inheritedSpecial,
           label
         );
       });
@@ -337,7 +340,7 @@ function normalizeStreams(data, base) {
     if (typeof item !== 'object') return;
 
     var special =
-      inherited ||
+      inheritedSpecial ||
       !!item.playlist_key ||
       !!item.playlistKey;
 
@@ -359,10 +362,7 @@ function normalizeStreams(data, base) {
           false,
           sourceLabel
         );
-      } else if (
-        embed &&
-        typeof embed === 'object'
-      ) {
+      } else if (embed && typeof embed === 'object') {
         add(
           embed.url || embed.src,
           'iframe',
@@ -372,17 +372,12 @@ function normalizeStreams(data, base) {
       }
     });
 
-    var url =
-      item.url ||
-      item.file ||
-      item.src;
+    var url = item.url || item.file || item.src;
 
     if (url) {
       add(
         url,
-        item.type ||
-        item.format ||
-        item.mimeType,
+        item.type || item.format || item.mimeType,
         special,
         sourceLabel
       );
@@ -408,18 +403,20 @@ function normalizeStreams(data, base) {
 
   visit(data, 0, false, '');
 
-  return results;
+  return output;
 }
-
-/* ================= ANIVEXA API ================= */
 
 async function fetchProviderStreams(
   provider,
   anilistId,
   episode,
-  audio,
-  fresh
+  audio
 ) {
+  /*
+   * Retained from your existing integration.
+   * If a provider needs a different real episode ID,
+   * its API adapter must be corrected separately.
+   */
   var episodeId = provider + '-' + episode;
 
   var url =
@@ -429,7 +426,7 @@ async function fetchProviderStreams(
     '/' + encodeURIComponent(audio) +
     '/' + encodeURIComponent(episodeId);
 
-  var data = await requestJson(url, fresh);
+  var data = await requestJson(url, false);
 
   var streams = normalizeStreams(
     data,
@@ -438,19 +435,11 @@ async function fetchProviderStreams(
 
   if (!streams.length) {
     throw new Error(
-      provider + ': no usable streams'
+      provider + ': API returned no usable streams'
     );
   }
 
-  return streams.sort(function (a, b) {
-    var priority = {
-      iframe: 0,
-      hls: 1,
-      video: 2
-    };
-
-    return priority[a.type] - priority[b.type];
-  });
+  return streams;
 }
 
 /* ================= HINDI API ================= */
@@ -459,10 +448,7 @@ function hindiApi(path, params, ttl, fresh) {
   var url = new URL(HINDI_API + path);
 
   Object.keys(params || {}).forEach(function (key) {
-    url.searchParams.set(
-      key,
-      params[key]
-    );
+    url.searchParams.set(key, params[key]);
   });
 
   var key = url.href;
@@ -471,32 +457,29 @@ function hindiApi(path, params, ttl, fresh) {
   if (
     !fresh &&
     cached &&
-    cached.until > Date.now()
+    cached.expires > Date.now()
   ) {
     return Promise.resolve(cached.data);
   }
 
-  if (hindiRequests.has(key)) {
-    return hindiRequests.get(key);
+  if (hindiPending.has(key)) {
+    return hindiPending.get(key);
   }
 
-  var request = requestJson(key, fresh).then(
+  var promise = requestJson(key, true).then(
     function (data) {
       if (ttl) {
         hindiCache.delete(key);
 
         hindiCache.set(key, {
-          until: Date.now() + ttl,
+          expires: Date.now() + ttl,
           data: data
         });
 
-        while (
-          hindiCache.size > HINDI_CACHE_LIMIT
-        ) {
-          var oldest =
-            hindiCache.keys().next().value;
-
-          hindiCache.delete(oldest);
+        while (hindiCache.size > 40) {
+          hindiCache.delete(
+            hindiCache.keys().next().value
+          );
         }
       }
 
@@ -504,68 +487,51 @@ function hindiApi(path, params, ttl, fresh) {
     }
   );
 
-  hindiRequests.set(key, request);
+  hindiPending.set(key, promise);
 
-  request.then(
+  promise.then(
     function () {
-      hindiRequests.delete(key);
+      hindiPending.delete(key);
     },
     function () {
-      hindiRequests.delete(key);
+      hindiPending.delete(key);
     }
   );
 
-  return request;
+  return promise;
 }
 
-function hindiSearchRows(data) {
-  var results = data && data.results;
+function hindiRows(data) {
+  if (Array.isArray(data)) return data;
+  if (!data) return [];
 
-  if (Array.isArray(results)) {
-    return results;
+  if (Array.isArray(data.results)) {
+    return data.results;
   }
 
   if (
-    results &&
-    Array.isArray(results.results)
+    data.results &&
+    Array.isArray(data.results.results)
   ) {
-    return results.results;
+    return data.results.results;
   }
 
-  if (
-    data &&
-    Array.isArray(data.data)
-  ) {
+  if (Array.isArray(data.data)) {
     return data.data;
   }
 
   return [];
 }
 
-function metadataFor(anime) {
-  var choice = hindiChoices.get(
-    hindiKey(anime)
-  );
+function currentHindiMetadata(anime) {
+  var choice = hindiChoices.get(animeKey(anime));
 
-  if (!choice) return null;
-
-  return hindiMetadata.get(
-    choice.id + '|' + SH.s
-  );
+  return choice
+    ? hindiMetadata.get(choice.id + '|' + SH.s)
+    : null;
 }
 
-function chooseHindiMatch(key, id, title) {
-  hindiChoices.set(key, {
-    id: id,
-    title: title
-  });
-
-  SH.hsrc = null;
-
-  paint(true);
-}
-
-function showHindiMatches(anime, rows, session) {
+function showHindiSearch(session, rows, note) {
   if (!playerIsCurrent(session.run)) return;
 
   destroyPlayer();
@@ -574,38 +540,90 @@ function showHindiMatches(anime, rows, session) {
   if (!top) return;
 
   var box = document.createElement('div');
-
   box.className = 'nov';
 
   box.style.cssText =
-    'max-height:100%;overflow:auto;padding:20px';
+    'padding:18px;max-height:100%;overflow:auto';
 
   var heading = document.createElement('span');
-
   heading.textContent =
-    'Choose the correct Hindi catalogue title';
+    note || 'Select the correct Hindi title';
 
   box.appendChild(heading);
 
-  rows.forEach(function (row) {
+  var input = document.createElement('input');
+
+  input.type = 'search';
+  input.value = String(session.anime[1] || '');
+  input.placeholder = 'Search another title';
+
+  input.style.cssText =
+    'display:block;width:90%;max-width:360px;' +
+    'margin:10px auto;padding:10px';
+
+  var search = document.createElement('button');
+  search.className = 'btn sm';
+  search.textContent = 'Search Hindi catalogue';
+
+  search.onclick = async function () {
+    var text = input.value.trim();
+    if (!text || !playerIsCurrent(session.run)) return;
+
+    search.disabled = true;
+    search.textContent = 'Searching...';
+
+    try {
+      var data = await hindiApi(
+        '/api/search',
+        { s: text, page: 1 },
+        300000,
+        false
+      );
+
+      if (!playerIsCurrent(session.run)) return;
+
+      var results = hindiRows(data).filter(function (row) {
+        return row && row.anime_id && row.title;
+      });
+
+      showHindiSearch(
+        session,
+        results,
+        results.length
+          ? 'Select the correct Hindi title'
+          : 'No results. Try another spelling.'
+      );
+    } catch (error) {
+      if (playerIsCurrent(session.run)) {
+        updatePlaybackStatus(error.message);
+        search.disabled = false;
+        search.textContent = 'Search again';
+      }
+    }
+  };
+
+  box.append(input, search);
+
+  rows.slice(0, 25).forEach(function (row) {
     var button = document.createElement('button');
 
     button.className = 'btn sm';
+    button.textContent = String(row.title);
 
     button.style.cssText =
-      'display:block;margin:8px auto;' +
-      'max-width:100%;white-space:normal';
-
-    button.textContent = String(row.title);
+      'display:block;margin:9px auto;' +
+      'max-width:95%;white-space:normal';
 
     button.onclick = function () {
       if (!playerIsCurrent(session.run)) return;
 
-      chooseHindiMatch(
-        hindiKey(anime),
-        String(row.anime_id),
-        String(row.title)
-      );
+      hindiChoices.set(animeKey(session.anime), {
+        id: String(row.anime_id),
+        title: String(row.title)
+      });
+
+      SH.src = null;
+      paint(true);
     };
 
     box.appendChild(button);
@@ -613,15 +631,10 @@ function showHindiMatches(anime, rows, session) {
 
   top.appendChild(box);
   appendPlayerClose(top);
-
-  updatePlaybackStatus(
-    'Select the correct title and season. ' +
-    'Do not select a different anime.'
-  );
 }
 
-async function resolveHindiTitle(anime, session) {
-  var key = hindiKey(anime);
+async function resolveHindiTitle(session) {
+  var key = animeKey(session.anime);
   var choice = hindiChoices.get(key);
 
   if (choice) return choice;
@@ -629,34 +642,23 @@ async function resolveHindiTitle(anime, session) {
   var data = await hindiApi(
     '/api/search',
     {
-      s: String(anime[1]),
+      s: String(session.anime[1]),
       page: 1
     },
     300000,
     false
   );
 
-  if (!playerIsCurrent(session.run)) {
-    return null;
-  }
+  if (!playerIsCurrent(session.run)) return null;
 
-  var rows = hindiSearchRows(data).filter(
-    function (row) {
-      return (
-        row &&
-        row.title &&
-        row.anime_id
-      );
-    }
-  );
+  var rows = hindiRows(data).filter(function (row) {
+    return row && row.title && row.anime_id;
+  });
 
   var unique = new Map();
 
   rows.forEach(function (row) {
-    unique.set(
-      String(row.anime_id),
-      row
-    );
+    unique.set(String(row.anime_id), row);
   });
 
   rows = Array.from(unique.values());
@@ -664,7 +666,7 @@ async function resolveHindiTitle(anime, session) {
   var exact = rows.filter(function (row) {
     return (
       titleKey(row.title) ===
-      titleKey(anime[1])
+      titleKey(session.anime[1])
     );
   });
 
@@ -675,35 +677,25 @@ async function resolveHindiTitle(anime, session) {
     };
 
     hindiChoices.set(key, choice);
-
     return choice;
   }
 
-  if (!rows.length) {
-    throw new Error(
-      'No Hindi catalogue result for this title. ' +
-      'An alternate title may be needed.'
-    );
-  }
-
-  showHindiMatches(
-    anime,
-    rows.slice(0, 20),
-    session
+  showHindiSearch(
+    session,
+    rows,
+    rows.length
+      ? 'Select the correct Hindi title'
+      : 'No exact match. Try another title.'
   );
 
   return null;
 }
 
 async function loadHindiMetadata(choice, session) {
-  var season = session.state.s;
-
-  var responses = await Promise.allSettled([
+  var results = await Promise.allSettled([
     hindiApi(
       '/api/info',
-      {
-        id: choice.id
-      },
+      { id: choice.id },
       300000,
       false
     ),
@@ -712,284 +704,97 @@ async function loadHindiMetadata(choice, session) {
       '/api/episodes',
       {
         id: choice.id,
-        season: season
+        season: session.state.s
       },
       300000,
       false
     )
   ]);
 
-  if (!playerIsCurrent(session.run)) {
-    return null;
-  }
+  if (!playerIsCurrent(session.run)) return;
 
-  var info = {};
-  var episodes = [];
-
-  var total = 0;
-  var seasons = 0;
-  var knownEpisodes = false;
-
-  if (responses[0].status === 'fulfilled') {
-    var infoResponse = responses[0].value;
-
-    info =
-      infoResponse.data ||
-      infoResponse.results ||
-      {};
-
-    seasons = parseInt(info.seasons, 10) || 0;
-  }
-
-  if (responses[1].status === 'fulfilled') {
-    var episodesResponse = responses[1].value;
-
-    var body =
-      episodesResponse.results ||
-      episodesResponse.data ||
-      {};
-
-    if (Array.isArray(body.episodes)) {
-      episodes = body.episodes;
-      knownEpisodes = true;
-    }
-
-    total =
-      parseInt(body.totalEpisodes, 10) ||
-      episodes.length;
-  }
-
-  var language = String(
-    info.language ||
-    info.languages ||
-    ''
-  );
-
-  var metadata = {
-    seasons: seasons,
-    total: total,
-    episodes: episodes,
-    knownEpisodes: knownEpisodes,
-    language: language
+  var meta = {
+    seasons: 0,
+    total: 0,
+    episodes: [],
+    knownEpisodes: false,
+    language: ''
   };
 
+  if (results[0].status === 'fulfilled') {
+    var response = results[0].value;
+
+    var info =
+      response.data ||
+      response.results ||
+      response;
+
+    meta.seasons = parseInt(info.seasons, 10) || 0;
+
+    meta.language = String(
+      info.language ||
+      info.languages ||
+      ''
+    );
+  } else {
+    console.warn('Hindi info:', results[0].reason);
+  }
+
+  if (results[1].status === 'fulfilled') {
+    var episodeResponse = results[1].value;
+
+    var body =
+      episodeResponse.results ||
+      episodeResponse.data ||
+      episodeResponse;
+
+    if (Array.isArray(body.episodes)) {
+      meta.episodes = body.episodes;
+      meta.knownEpisodes = true;
+    }
+
+    meta.total =
+      parseInt(body.totalEpisodes, 10) ||
+      meta.episodes.length;
+  } else {
+    console.warn('Hindi episodes:', results[1].reason);
+  }
+
   hindiMetadata.set(
-    choice.id + '|' + season,
-    metadata
+    choice.id + '|' + session.state.s,
+    meta
   );
 
-  /*
-   * Refresh controls without restarting the session.
-   */
   paint();
 
   if (
-    language &&
-    !/hindi|\bhin\b/i.test(language)
+    meta.language &&
+    !/hindi|\bhin\b/i.test(meta.language)
   ) {
     throw new Error(
-      'This catalogue entry does not list Hindi audio. ' +
-      'No non-Hindi fallback was selected.'
-    );
-  }
-
-  if (seasons && season > seasons) {
-    throw new Error(
-      'Selected season is not listed for this Hindi title'
+      'This title does not list Hindi audio'
     );
   }
 
   if (
-    knownEpisodes &&
-    !episodes.some(function (episode) {
-      return (
-        Number(episode.episode) ===
-        session.state.e
-      );
+    meta.seasons &&
+    session.state.s > meta.seasons
+  ) {
+    throw new Error(
+      'This Hindi title does not list the selected season'
+    );
+  }
+
+  if (
+    meta.knownEpisodes &&
+    !meta.episodes.some(function (episode) {
+      return Number(episode.episode) === session.state.e;
     })
   ) {
     throw new Error(
-      'Selected episode is not listed for this Hindi season'
+      'This Hindi title does not list the selected episode'
     );
   }
-
-  return metadata;
-}
-
-function drawHindiSources(streams, session) {
-  if (!playerIsCurrent(session.run)) return;
-
-  var holder = document.getElementById(
-    'hindi-source-tools'
-  );
-
-  if (!holder) return;
-
-  holder.replaceChildren();
-
-  var label = document.createElement('small');
-
-  label.textContent =
-    'Hindi catalogue sources. ' +
-    'Embedded players may contain multiple audio tracks.';
-
-  label.style.display = 'block';
-
-  var select = document.createElement('select');
-
-  select.className = 'sel';
-
-  select.setAttribute(
-    'aria-label',
-    'Hindi source'
-  );
-
-  streams.forEach(function (stream, index) {
-    var option = document.createElement('option');
-
-    option.value = index;
-
-    option.textContent =
-      'Source ' + (index + 1) +
-      (stream.label
-        ? ' · ' + stream.label
-        : '');
-
-    select.appendChild(option);
-  });
-
-  select.value = String(session.sourceIndex);
-
-  select.onchange = function () {
-    SH.hsrc = Number(select.value);
-    paint(true);
-  };
-
-  var rematch = document.createElement('button');
-
-  rematch.className = 'btn sm';
-  rematch.textContent = 'Change title match';
-
-  rematch.onclick = function () {
-    hindiChoices.delete(
-      hindiKey(session.anime)
-    );
-
-    SH.hsrc = null;
-    paint(true);
-  };
-
-  holder.append(
-    label,
-    select,
-    rematch
-  );
-}
-
-async function playHindi(session, tryStream) {
-  showPlayerMessage(
-    'Finding Hindi title...',
-    String(session.anime[1])
-  );
-
-  var choice = await resolveHindiTitle(
-    session.anime,
-    session
-  );
-
-  if (
-    !choice ||
-    !playerIsCurrent(session.run)
-  ) {
-    return;
-  }
-
-  showPlayerMessage(
-    'Checking Hindi season...',
-    choice.title +
-    ' · Season ' +
-    session.state.s
-  );
-
-  await loadHindiMetadata(choice, session);
-
-  if (!playerIsCurrent(session.run)) {
-    return;
-  }
-
-  showPlayerMessage(
-    'Loading Hindi sources...',
-    choice.title +
-    ' · Episode ' +
-    session.state.e
-  );
-
-  var data = await hindiApi(
-    '/api/stream',
-    {
-      id: choice.id,
-      season: session.state.s,
-      ep: session.state.e
-    },
-    0,
-    true
-  );
-
-  if (!playerIsCurrent(session.run)) {
-    return;
-  }
-
-  var streams = normalizeStreams(
-    data,
-    HINDI_API + '/'
-  );
-
-  if (!streams.length) {
-    throw new Error(
-      'Hindi API returned no usable sources'
-    );
-  }
-
-  var index = session.state.hsrc === null
-    ? Number(session.state.v)
-    : Number(session.state.hsrc);
-
-  /*
-   * Always show available sources, including when
-   * Server 02 was selected but only one source exists.
-   */
-  session.sourceIndex =
-    index < streams.length ? index : 0;
-
-  drawHindiSources(streams, session);
-
-  if (index >= streams.length) {
-    throw new Error(
-      'Requested Hindi source is not available. ' +
-      'Select a source from the list below the player.'
-    );
-  }
-
-  var label =
-    'Hindi · ' +
-    (
-      streams[index].label ||
-      'Source ' + (index + 1)
-    );
-
-  if (
-    await tryStream(
-      streams[index],
-      label
-    )
-  ) {
-    return;
-  }
-
-  throw new Error(
-    'This Hindi source failed. ' +
-    'Choose another source from the list below the player.'
-  );
 }
 
 /* ================= HLS LIBRARY ================= */
@@ -999,18 +804,14 @@ function loadHlsLibrary() {
     return Promise.resolve();
   }
 
-  if (hlsLibraryPromise) {
-    return hlsLibraryPromise;
-  }
+  if (hlsLibraryPromise) return hlsLibraryPromise;
 
   hlsLibraryPromise = new Promise(function (resolve, reject) {
     var script = document.createElement('script');
     var finished = false;
 
     var timer = setTimeout(function () {
-      finish(
-        new Error('HLS library timed out')
-      );
+      finish(new Error('HLS library timed out'));
     }, 15000);
 
     function finish(error) {
@@ -1018,7 +819,6 @@ function loadHlsLibrary() {
       finished = true;
 
       clearTimeout(timer);
-
       script.onload = null;
       script.onerror = null;
 
@@ -1039,15 +839,13 @@ function loadHlsLibrary() {
     script.onload = function () {
       finish(
         typeof Hls === 'undefined'
-          ? new Error('HLS unavailable')
+          ? new Error('HLS library unavailable')
           : null
       );
     };
 
     script.onerror = function () {
-      finish(
-        new Error('HLS download failed')
-      );
+      finish(new Error('HLS library download failed'));
     };
 
     document.head.appendChild(script);
@@ -1082,12 +880,7 @@ function playerIsCurrent(run) {
 }
 
 function destroyPlayer() {
-  var top = document.getElementById('shtop');
-
-  if (
-    activePlayback &&
-    activePlayback.mediaCleanup
-  ) {
+  if (activePlayback && activePlayback.mediaCleanup) {
     activePlayback.mediaCleanup();
     activePlayback.mediaCleanup = null;
   }
@@ -1101,6 +894,7 @@ function destroyPlayer() {
     } catch (error) {}
   }
 
+  var top = document.getElementById('shtop');
   if (!top) return;
 
   var video = top.querySelector('video');
@@ -1115,11 +909,9 @@ function destroyPlayer() {
     } catch (error) {}
   }
 
-  var iframe = top.querySelector('iframe');
+  var frame = top.querySelector('iframe');
 
-  if (iframe) {
-    iframe.remove();
-  }
+  if (frame) frame.remove();
 }
 
 function stopPlayback() {
@@ -1157,11 +949,7 @@ function appendPlayerClose(top) {
 
   button.className = 'sh-x';
   button.textContent = '✕';
-
-  button.setAttribute(
-    'aria-label',
-    'Close'
-  );
+  button.setAttribute('aria-label', 'Close');
 
   button.onclick = function () {
     stopPlayback();
@@ -1184,10 +972,9 @@ function showPlayerMessage(title, detail, retry) {
   var description = document.createElement('small');
   description.textContent = detail || '';
 
-  box.append(
-    heading,
-    description
-  );
+  description.style.overflowWrap = 'anywhere';
+
+  box.append(heading, description);
 
   if (retry) {
     var button = document.createElement('button');
@@ -1207,16 +994,75 @@ function showPlayerMessage(title, detail, retry) {
 }
 
 function updatePlaybackStatus(text) {
-  var status = document.getElementById(
-    'playback-status'
-  );
+  var status = document.getElementById('playback-status');
 
-  if (status) {
-    status.textContent = text;
+  if (status) status.textContent = text;
+}
+
+function drawSources(streams, provider, session, selected) {
+  if (!playerIsCurrent(session.run)) return;
+
+  var holder = document.getElementById('source-tools');
+  if (!holder) return;
+
+  holder.replaceChildren();
+
+  var label = document.createElement('small');
+
+  label.style.display = 'block';
+
+  label.textContent =
+    'Actual sources returned by ' + provider + ':';
+
+  var select = document.createElement('select');
+
+  select.className = 'sel';
+  select.setAttribute('aria-label', 'Playback source');
+
+  streams.forEach(function (stream, index) {
+    var option = document.createElement('option');
+
+    option.value = index;
+
+    option.textContent =
+      'Source ' + (index + 1) +
+      (stream.label ? ' · ' + stream.label : '') +
+      ' · ' + stream.type;
+
+    select.appendChild(option);
+  });
+
+  select.value = String(selected);
+
+  select.onchange = function () {
+    if (!isHindi(SH.l) && provider !== 'Saved source') {
+      SH.provider = provider;
+    }
+
+    SH.src = Number(select.value);
+
+    paint(true);
+  };
+
+  holder.append(label, select);
+
+  if (isHindi(session.state.l)) {
+    var change = document.createElement('button');
+
+    change.className = 'btn sm';
+    change.textContent = 'Change Hindi title';
+
+    change.onclick = function () {
+      hindiChoices.delete(animeKey(session.anime));
+      SH.src = null;
+      paint(true);
+    };
+
+    holder.appendChild(change);
   }
 }
 
-/* ================= MEDIA PLAYER ================= */
+/* ================= STABLE MEDIA PLAYER ================= */
 
 async function mountStream(stream, session, provider) {
   var run = session.run;
@@ -1229,11 +1075,7 @@ async function mountStream(stream, session, provider) {
 
   var top = preparePlayerTop();
 
-  if (!top) {
-    throw new Error(
-      'Player container missing'
-    );
-  }
+  if (!top) throw new Error('Player container missing');
 
   if (stream.type === 'iframe') {
     var frame = document.createElement('iframe');
@@ -1253,22 +1095,17 @@ async function mountStream(stream, session, provider) {
     appendPlayerClose(top);
 
     updatePlaybackStatus(
-      'Source: ' + provider +
-      ' · If playback fails inside, choose another source.' +
+      'Provider: ' + provider +
+      ' · Embedded player. If it fails inside, ' +
+      'select another source/provider.' +
       (
         isHindi(session.state.l)
-          ? ' Select Hindi audio inside the player if needed.'
+          ? ' Select Hindi audio inside if needed.'
           : ''
       )
     );
 
-    /*
-     * A cross-origin iframe cannot be verified
-     * as successful video playback by this page.
-     */
-    return {
-      verified: false
-    };
+    return { verified: false };
   }
 
   var video = document.createElement('video');
@@ -1281,38 +1118,29 @@ async function mountStream(stream, session, provider) {
   video.style.cssText =
     'width:100%;height:100%;background:#000';
 
-  video.onended = function () {
-    if (
-      playerIsCurrent(run) &&
-      U &&
-      U.prefs.auto &&
-      session.state.e < eN()
-    ) {
-      play(session.state.e + 1);
-    }
-  };
-
   top.appendChild(video);
   appendPlayerClose(top);
 
   return new Promise(function (resolve, reject) {
     var settled = false;
     var disposed = false;
-    var lateReported = false;
+    var failedAfterStart = false;
+
     var localHls = null;
+    var networkRecoveries = 0;
+    var mediaRecoveries = 0;
 
-    var timer = setTimeout(function () {
-      reportError(
-        new Error('Stream loading timed out')
-      );
-    }, 20000);
+    var recoveryTimer = null;
+    var stallTimer = null;
 
-    function clearWait() {
-      clearTimeout(timer);
+    var startTimer = setTimeout(function () {
+      fail(new Error('Initial video load timed out'));
+    }, 30000);
 
-      if (
-        session.cancelAttempt === cancelAttempt
-      ) {
+    function clearStartTimer() {
+      clearTimeout(startTimer);
+
+      if (session.cancelAttempt === cancelAttempt) {
         session.cancelAttempt = null;
       }
     }
@@ -1321,26 +1149,20 @@ async function mountStream(stream, session, provider) {
       if (disposed) return;
       disposed = true;
 
-      clearWait();
+      clearStartTimer();
+      clearTimeout(recoveryTimer);
+      clearTimeout(stallTimer);
 
-      video.removeEventListener(
-        'loadeddata',
-        onReady
-      );
+      video.removeEventListener('loadeddata', ready);
+      video.removeEventListener('playing', playing);
+      video.removeEventListener('waiting', waiting);
+      video.removeEventListener('stalled', waiting);
+      video.removeEventListener('pause', paused);
+      video.removeEventListener('error', videoError);
+      video.removeEventListener('ended', ended);
 
-      video.removeEventListener(
-        'error',
-        onVideoError
-      );
-
-      if (
-        localHls &&
-        typeof Hls !== 'undefined'
-      ) {
-        localHls.off(
-          Hls.Events.ERROR,
-          onHlsError
-        );
+      if (localHls && typeof Hls !== 'undefined') {
+        localHls.off(Hls.Events.ERROR, hlsError);
       }
     }
 
@@ -1350,16 +1172,14 @@ async function mountStream(stream, session, provider) {
       if (settled) return;
 
       settled = true;
-      clearWait();
+      clearStartTimer();
 
-      reject(
-        new Error('Playback cancelled')
-      );
+      reject(new Error('Playback cancelled'));
     }
 
     session.cancelAttempt = cancelAttempt;
 
-    function reportError(error) {
+    function fail(error) {
       if (disposed) return;
 
       if (!playerIsCurrent(run)) {
@@ -1369,47 +1189,35 @@ async function mountStream(stream, session, provider) {
 
       if (!settled) {
         settled = true;
-        clearWait();
+        clearStartTimer();
         reject(error);
         return;
       }
 
-      if (lateReported) return;
-      lateReported = true;
+      /*
+       * Once video has started:
+       * DO NOT rebuild the sheet or restart providers.
+       * Show a final error and wait for the user's action.
+       */
+      if (!failedAfterStart) {
+        failedAfterStart = true;
 
-      if (
-        !isHindi(session.state.l) &&
-        session.recoveries < 1
-      ) {
-        var excluded = session.excluded.slice();
-
-        if (
-          excluded.indexOf(stream.url) < 0
-        ) {
-          excluded.push(stream.url);
-        }
-
-        beginPlayback(
-          session.anime,
-          true,
-          excluded,
-          session.recoveries + 1
-        );
-      } else {
         destroyPlayer();
 
         showPlayerMessage(
           'Playback stopped',
           error.message +
-          '. Choose another source or Retry.',
+          '. Choose another source/provider or Retry.',
           true
         );
 
-        updatePlaybackStatus(error.message);
+        updatePlaybackStatus(
+          'Provider: ' + provider + ' · ' + error.message
+        );
       }
     }
 
-    function onReady() {
+    function ready() {
       if (disposed || settled) return;
 
       if (!playerIsCurrent(run)) {
@@ -1418,63 +1226,181 @@ async function mountStream(stream, session, provider) {
       }
 
       settled = true;
-      clearWait();
+      clearStartTimer();
 
-      resolve({
-        verified: true
-      });
+      resolve({ verified: true });
     }
 
-    function onVideoError() {
-      reportError(
-        new Error(
-          'Video failed' +
-          (
-            video.error
-              ? ' (code ' + video.error.code + ')'
-              : ''
-          )
-        )
+    function playing() {
+      if (disposed || !playerIsCurrent(run)) return;
+
+      clearTimeout(stallTimer);
+
+      updatePlaybackStatus(
+        'Provider: ' + provider + ' · Playing'
       );
     }
 
-    function onHlsError(event, data) {
+    function waiting() {
       if (
         disposed ||
-        !playerIsCurrent(run)
+        !playerIsCurrent(run) ||
+        video.paused
       ) {
         return;
       }
+
+      updatePlaybackStatus(
+        'Provider: ' + provider +
+        ' · Buffering; keeping the current video session.'
+      );
+
+      clearTimeout(stallTimer);
+
+      /*
+       * This timer only updates text.
+       * It never restarts or changes the stream.
+       */
+      stallTimer = setTimeout(function () {
+        if (disposed || !playerIsCurrent(run)) return;
+
+        updatePlaybackStatus(
+          'Provider: ' + provider +
+          ' · Source/network is slow. ' +
+          'You can select another source/provider.'
+        );
+      }, 15000);
+    }
+
+    function paused() {
+      clearTimeout(stallTimer);
+
+      if (
+        !disposed &&
+        playerIsCurrent(run) &&
+        !video.ended
+      ) {
+        updatePlaybackStatus(
+          'Provider: ' + provider +
+          ' · Paused / press Play if autoplay was blocked.'
+        );
+      }
+    }
+
+    function ended() {
+      if (
+        playerIsCurrent(run) &&
+        U &&
+        U.prefs.auto &&
+        session.state.e < eN()
+      ) {
+        play(session.state.e + 1);
+      }
+    }
+
+    function videoError() {
+      /*
+       * Give Hls.js its own bounded media recovery path.
+       * Native media errors have no Hls.js handler.
+       */
+      if (localHls) return;
+
+      fail(new Error(
+        'Video error' +
+        (video.error ? ' ' + video.error.code : '')
+      ));
+    }
+
+    function hlsError(event, data) {
+      if (disposed || !playerIsCurrent(run)) return;
+
+      console.warn('HLS:', provider, data);
+
+      /*
+       * Nonfatal segment/stall errors are handled by
+       * Hls.js. Do not destroy playback for those.
+       */
+      if (!data.fatal) return;
 
       var status =
         data.response &&
         data.response.code;
 
+      /*
+       * Fatal authentication/missing-resource errors
+       * are not fixed by endlessly restarting loading.
+       */
       if (
         status === 401 ||
         status === 403 ||
-        status === 404 ||
-        data.fatal
+        status === 404
       ) {
-        reportError(
-          new Error(
-            status
-              ? 'Media HTTP ' + status
-              : 'HLS: ' + data.details
-          )
-        );
+        fail(new Error('Media HTTP ' + status));
+        return;
       }
+
+      if (
+        data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+        networkRecoveries < 1
+      ) {
+        networkRecoveries++;
+
+        updatePlaybackStatus(
+          'Provider: ' + provider +
+          ' · Retrying the current media connection once.'
+        );
+
+        recoveryTimer = setTimeout(function () {
+          if (
+            disposed ||
+            !playerIsCurrent(run) ||
+            !localHls
+          ) {
+            return;
+          }
+
+          var position = Number.isFinite(video.currentTime)
+            ? video.currentTime
+            : -1;
+
+          localHls.startLoad(position);
+        }, 1000);
+
+        return;
+      }
+
+      if (
+        data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+        mediaRecoveries < 1
+      ) {
+        mediaRecoveries++;
+
+        updatePlaybackStatus(
+          'Provider: ' + provider +
+          ' · Trying one media recovery.'
+        );
+
+        try {
+          localHls.recoverMediaError();
+        } catch (error) {
+          fail(error);
+        }
+
+        return;
+      }
+
+      fail(new Error(
+        'Fatal HLS error: ' + data.details
+      ));
     }
 
-    video.addEventListener(
-      'loadeddata',
-      onReady
-    );
-
-    video.addEventListener(
-      'error',
-      onVideoError
-    );
+    video.addEventListener('loadeddata', ready);
+    video.addEventListener('playing', playing);
+    video.addEventListener('waiting', waiting);
+    video.addEventListener('stalled', waiting);
+    video.addEventListener('pause', paused);
+    video.addEventListener('error', videoError);
+    video.addEventListener('ended', ended);
 
     (async function () {
       try {
@@ -1482,33 +1408,30 @@ async function mountStream(stream, session, provider) {
           'application/vnd.apple.mpegurl'
         );
 
-        if (
-          stream.type === 'hls' &&
-          !nativeHls
-        ) {
+        if (stream.type === 'hls' && !nativeHls) {
           await loadHlsLibrary();
 
           if (
-            settled ||
             disposed ||
+            settled ||
             !playerIsCurrent(run)
           ) {
             return;
           }
 
           if (!Hls.isSupported()) {
-            throw new Error(
-              'HLS unsupported'
-            );
+            throw new Error('HLS unsupported in this browser');
           }
 
-          localHls = new Hls();
+          localHls = new Hls({
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            backBufferLength: 30
+          });
+
           activeHls = localHls;
 
-          localHls.on(
-            Hls.Events.ERROR,
-            onHlsError
-          );
+          localHls.on(Hls.Events.ERROR, hlsError);
 
           localHls.loadSource(stream.url);
           localHls.attachMedia(video);
@@ -1519,19 +1442,18 @@ async function mountStream(stream, session, provider) {
 
         var promise = video.play();
 
-        if (
-          promise &&
-          promise.catch
-        ) {
+        if (promise && promise.catch) {
           promise.catch(function () {
-            /*
-             * User can press Play if autoplay
-             * is blocked by the browser.
-             */
+            if (playerIsCurrent(run) && !disposed) {
+              updatePlaybackStatus(
+                'Provider: ' + provider +
+                ' · Press Play to start.'
+              );
+            }
           });
         }
       } catch (error) {
-        reportError(error);
+        fail(error);
       }
     })();
   });
@@ -1553,15 +1475,13 @@ function savePlaybackHistory(session) {
   var state = session.state;
   var name = session.anime[1];
 
-  U.hist = (U.hist || []).filter(
-    function (item) {
-      return !(
-        item.n === name &&
-        item.s === state.s &&
-        item.e === state.e
-      );
-    }
-  );
+  U.hist = (U.hist || []).filter(function (item) {
+    return !(
+      item.n === name &&
+      item.s === state.s &&
+      item.e === state.e
+    );
+  });
 
   U.hist.unshift({
     n: name,
@@ -1573,39 +1493,76 @@ function savePlaybackHistory(session) {
   save();
 }
 
-/* ================= STREAM FALLBACK ================= */
+/* ================= SOURCE SELECTION ================= */
 
-async function startPlayback(session) {
-  var anime = session.anime;
-  var state = session.state;
-  var run = session.run;
+function playableSources(streams, provider) {
+  return streams.filter(function (stream) {
+    if (stream.specialHls) return false;
 
-  var lastError = 'No usable stream returned';
-
-  async function tryStream(stream, provider) {
+    /*
+     * Retains the existing conservative ReAnime rule.
+     * Custom/encrypted playlists need a separate adapter.
+     */
     if (
-      !playerIsCurrent(run) ||
-      session.excluded.indexOf(stream.url) >= 0
+      provider === 'reanime' &&
+      stream.type === 'hls'
     ) {
       return false;
     }
 
-    if (
-      stream.specialHls ||
-      (
-        provider === 'reanime' &&
-        stream.type === 'hls'
-      )
-    ) {
-      lastError =
-        'Special HLS requires a supported embed ' +
-        'or backend integration';
+    return true;
+  });
+}
 
-      return false;
+async function trySources(streams, provider, session) {
+  if (!playerIsCurrent(session.run)) return false;
+
+  streams = playableSources(streams, provider);
+
+  if (!streams.length) {
+    session.lastError =
+      provider + ': no supported ordinary stream/embed';
+    return false;
+  }
+
+  var manual = session.state.src !== null;
+
+  var first = manual
+    ? Number(session.state.src)
+    : 0;
+
+  drawSources(
+    streams,
+    provider,
+    session,
+    first < streams.length ? first : 0
+  );
+
+  if (first >= streams.length || first < 0) {
+    session.lastError =
+      'Selected source is unavailable. Choose another source.';
+    return false;
+  }
+
+  var indices = [first];
+
+  if (!manual) {
+    for (var i = 0; i < streams.length; i++) {
+      if (i !== first) indices.push(i);
     }
+  }
+
+  for (var j = 0; j < indices.length; j++) {
+    if (!playerIsCurrent(session.run)) return false;
+
+    var index = indices[j];
+    var stream = streams[index];
+
+    drawSources(streams, provider, session, index);
 
     updatePlaybackStatus(
-      'Loading: ' + provider
+      'Trying ' + provider +
+      ' · Source ' + (index + 1)
     );
 
     try {
@@ -1615,231 +1572,225 @@ async function startPlayback(session) {
         provider
       );
 
-      if (!playerIsCurrent(run)) {
-        return false;
-      }
+      if (!playerIsCurrent(session.run)) return false;
 
       if (result.verified) {
-        updatePlaybackStatus(
-          'Source: ' + provider
-        );
-
         savePlaybackHistory(session);
       }
 
       return true;
     } catch (error) {
-      if (!playerIsCurrent(run)) {
-        return false;
-      }
+      if (!playerIsCurrent(session.run)) return false;
 
-      lastError = error.message;
+      session.lastError =
+        provider + ': ' + error.message;
 
-      console.warn(
-        'Playback:',
-        provider,
-        error.message
-      );
+      console.warn(session.lastError);
 
       destroyPlayer();
-      return false;
     }
   }
 
-  var staticUrls = [
-    vurl(
-      anime[1],
-      state.s,
-      state.e,
-      state.l,
-      state.v
-    ),
+  return false;
+}
 
-    vurl(
-      anime[1],
-      state.s,
-      state.e,
-      state.l,
-      1 - state.v
-    )
-  ];
+/* ================= PLAYBACK FLOW ================= */
 
-  var seen = new Set();
+async function startPlayback(session) {
+  var anime = session.anime;
+  var state = session.state;
+  var run = session.run;
 
-  for (var i = 0; i < staticUrls.length; i++) {
-    if (!playerIsCurrent(run)) return;
+  /*
+   * Local saved video is used in Auto mode.
+   * An explicitly selected provider is not overridden.
+   */
+  if (state.provider === 'auto') {
+    var staticUrls = [
+      vurl(
+        anime[1],
+        state.s,
+        state.e,
+        state.l,
+        state.v
+      ),
 
-    var url = safeStreamUrl(
-      staticUrls[i]
-    );
+      vurl(
+        anime[1],
+        state.s,
+        state.e,
+        state.l,
+        1 - state.v
+      )
+    ];
 
-    if (!url || seen.has(url)) {
-      continue;
-    }
+    var seen = new Set();
+    var saved = [];
 
-    seen.add(url);
+    staticUrls.forEach(function (value) {
+      var url = safeStreamUrl(value);
 
-    if (
-      await tryStream(
-        {
+      if (url && !seen.has(url)) {
+        seen.add(url);
+
+        saved.push({
           url: url,
           type: inferStreamType(url),
-          specialHls: false
-        },
-        'Saved source'
-      )
+          specialHls: false,
+          label: 'Saved video'
+        });
+      }
+    });
+
+    if (
+      saved.length &&
+      await trySources(saved, 'Saved source', session)
     ) {
       return;
     }
   }
 
-  /*
-   * Hindi mode uses only the Hindi API after
-   * any explicitly configured Hindi saved video.
-   * It does not silently fall back to English/Sub.
-   */
+  if (!playerIsCurrent(run)) return;
+
   if (isHindi(state.l)) {
     try {
-      await playHindi(
-        session,
-        tryStream
-      );
-    } catch (error) {
-      if (playerIsCurrent(run)) {
-        destroyPlayer();
-
-        showPlayerMessage(
-          'Hindi source unavailable',
-          error.message,
-          true
-        );
-
-        updatePlaybackStatus(
-          error.message +
-          ' · Browser CORS/network failures may also ' +
-          'prevent API access.'
-        );
-      }
-    }
-
-    return;
-  }
-
-  var anilistId = getAnimeId(anime);
-
-  if (!anilistId) {
-    if (playerIsCurrent(run)) {
       showPlayerMessage(
-        'Video not found',
-        'No AniList ID or working saved stream. ' +
-        'You can also try the Hindi tab.',
+        'Finding Hindi title...',
+        String(anime[1])
+      );
+
+      var choice = await resolveHindiTitle(session);
+
+      if (!choice || !playerIsCurrent(run)) return;
+
+      showPlayerMessage(
+        'Checking Hindi season...',
+        choice.title
+      );
+
+      await loadHindiMetadata(choice, session);
+
+      if (!playerIsCurrent(run)) return;
+
+      showPlayerMessage(
+        'Loading Hindi sources...',
+        choice.title +
+        ' · S' + state.s +
+        ' E' + state.e
+      );
+
+      var data = await hindiApi(
+        '/api/stream',
+        {
+          id: choice.id,
+          season: state.s,
+          ep: state.e
+        },
+        0,
         true
       );
+
+      if (!playerIsCurrent(run)) return;
+
+      var hindiStreams = normalizeStreams(
+        data,
+        HINDI_API + '/'
+      );
+
+      if (
+        await trySources(
+          hindiStreams,
+          'Hindi API',
+          session
+        )
+      ) {
+        return;
+      }
+
+      throw new Error(
+        session.lastError ||
+        'Hindi API returned no playable sources'
+      );
+    } catch (error) {
+      if (!playerIsCurrent(run)) return;
+
+      destroyPlayer();
+
+      showPlayerMessage(
+        'Hindi source unavailable',
+        error.message,
+        true
+      );
+
+      updatePlaybackStatus(
+        error.message +
+        ' · HTTP 500 requires investigation of the API backend.'
+      );
+
+      console.error('Hindi API:', error);
     }
 
     return;
   }
 
-  var providers = providerOrder(
-    state.v
-  );
+  var id = getAnimeId(anime);
+
+  if (!id) {
+    showPlayerMessage(
+      'Video not found',
+      'No AniList ID. Hindi mode can search by title.',
+      true
+    );
+
+    return;
+  }
+
+  var providers = state.provider === 'auto'
+    ? STREAM_PROVIDERS.slice()
+    : [state.provider];
 
   var audio = state.l === 'dub'
     ? 'dub'
     : 'sub';
 
   for (var p = 0; p < providers.length; p++) {
+    if (!playerIsCurrent(run)) return;
+
     var provider = providers[p];
 
-    for (
-      var attempt = 0;
-      attempt < 2;
-      attempt++
-    ) {
+    destroyPlayer();
+
+    showPlayerMessage(
+      'Loading provider...',
+      provider +
+      ' · ' + (p + 1) +
+      '/' + providers.length
+    );
+
+    updatePlaybackStatus(
+      'Requesting: ' + provider
+    );
+
+    try {
+      var streams = await fetchProviderStreams(
+        provider,
+        id,
+        state.e,
+        audio
+      );
+
       if (!playerIsCurrent(run)) return;
 
-      destroyPlayer();
-
-      showPlayerMessage(
-        attempt
-          ? 'Refreshing stream...'
-          : 'Loading stream...',
-        provider +
-        ' · Attempt ' +
-        (attempt + 1) +
-        '/2'
-      );
-
-      updatePlaybackStatus(
-        'Trying ' + provider
-      );
-
-      if (attempt) {
-        await delay(900);
-
-        if (!playerIsCurrent(run)) {
-          return;
-        }
+      if (await trySources(streams, provider, session)) {
+        return;
       }
+    } catch (error) {
+      if (!playerIsCurrent(run)) return;
 
-      try {
-        var streams = await fetchProviderStreams(
-          provider,
-          anilistId,
-          state.e,
-          audio,
-          attempt > 0
-        );
+      session.lastError =
+        provider + ': ' + error.message;
 
-        if (!playerIsCurrent(run)) {
-          return;
-        }
-
-        var attempted = new Set();
-
-        for (
-          var j = 0;
-          j < streams.length;
-          j++
-        ) {
-          if (!playerIsCurrent(run)) {
-            return;
-          }
-
-          if (
-            attempted.has(streams[j].url)
-          ) {
-            continue;
-          }
-
-          attempted.add(
-            streams[j].url
-          );
-
-          if (
-            await tryStream(
-              streams[j],
-              provider
-            )
-          ) {
-            return;
-          }
-        }
-      } catch (error) {
-        if (!playerIsCurrent(run)) {
-          return;
-        }
-
-        lastError = error.message;
-
-        if (
-          /API HTTP (400|401|403|404|422)/.test(
-            error.message
-          )
-        ) {
-          break;
-        }
-      }
+      console.warn(session.lastError);
     }
   }
 
@@ -1848,31 +1799,19 @@ async function startPlayback(session) {
 
     showPlayerMessage(
       'No playable stream found',
-      lastError +
-      '. Source/backend may need repair.',
+      session.lastError +
+      '. Choose another provider or check the backend.',
       true
     );
 
-    updatePlaybackStatus(
-      lastError
-    );
+    updatePlaybackStatus(session.lastError);
   }
 }
 
-function beginPlayback(
-  anime,
-  force,
-  excluded,
-  recoveries
-) {
-  var key = playbackIdentity();
+function beginPlayback(anime, force) {
+  var key = stateKey();
 
-  if (
-    !force &&
-    playbackKey === key
-  ) {
-    return;
-  }
+  if (!force && key === playbackKey) return;
 
   stopPlayback();
   playbackKey = key;
@@ -1887,106 +1826,77 @@ function beginPlayback(
       e: SH.e,
       l: SH.l,
       v: SH.v,
-
-      hsrc:
-        SH.hsrc === undefined
-          ? null
-          : SH.hsrc
+      provider: SH.provider || 'auto',
+      src: SH.src === undefined ? null : SH.src
     },
 
     cancelled: false,
     historySaved: false,
-
-    excluded: excluded || [],
-    recoveries: recoveries || 0,
-
     cancelAttempt: null,
-    mediaCleanup: null
+    mediaCleanup: null,
+    lastError: 'No usable stream returned'
   };
 
   activePlayback = session;
 
-  var holder = document.getElementById(
-    'hindi-source-tools'
-  );
+  var sources = document.getElementById('source-tools');
 
-  if (holder) {
-    holder.replaceChildren();
-  }
+  if (sources) sources.replaceChildren();
 
   warmHlsLibrary();
 
-  startPlayback(session).catch(
-    function (error) {
-      if (
-        !playerIsCurrent(session.run)
-      ) {
-        return;
-      }
+  startPlayback(session).catch(function (error) {
+    if (!playerIsCurrent(session.run)) return;
 
-      destroyPlayer();
+    destroyPlayer();
 
-      showPlayerMessage(
-        'Player error',
-        error.message,
-        true
-      );
+    showPlayerMessage(
+      'Player error',
+      error.message,
+      true
+    );
 
-      console.error(error);
-    }
-  );
+    console.error(error);
+  });
 }
 
 /* ================= SHEET ================= */
 
-function openSheet(i) {
+function openSheet(index) {
   stopPlayback();
 
-  var anime = ALL[i];
+  var anime = ALL[index];
   if (!anime) return;
 
-  var preferences = U
-    ? U.prefs
-    : DP();
+  var preferences = U ? U.prefs : DP();
+  var color = C[index % 5];
 
-  var color = C[i % 5];
-
-  var metadata = String(
-    anime[2] || ''
-  ).split(' • ');
-
-  var sheet = document.getElementById(
-    'sheet'
-  );
-
+  var sheet = document.getElementById('sheet');
   if (!sheet) return;
-
-  var banner =
-    anime[4] ||
-    anime[3];
 
   var language = preferences.lang;
 
-  var validLanguage = playerLanguages().some(
-    function (entry) {
-      return entry[0] === language;
-    }
-  );
-
-  if (!validLanguage) {
+  if (
+    !playerLanguages().some(function (item) {
+      return item[0] === language;
+    })
+  ) {
     language = 'hi';
   }
 
   SH = {
-    i: i,
+    i: index,
     s: 1,
     e: 1,
     l: language,
     v: Number(preferences.srv) === 1 ? 1 : 0,
-    hsrc: null,
+    provider: 'auto',
+    src: null,
     play: 0,
     pg: 0
   };
+
+  var banner = anime[4] || anime[3];
 
   var background = banner
     ? (
@@ -1996,10 +1906,10 @@ function openSheet(i) {
       )
     : (
         'radial-gradient(85% 70% at 70% 0%,' +
-        'rgba(' + color + ',.5),transparent 70%),' +
-        'radial-gradient(60% 50% at 0% 100%,' +
-        'rgba(233,196,106,.2),transparent 70%),#0c0c14'
+        'rgba(' + color + ',.5),transparent 70%),#0c0c14'
       );
+
+  var metadata = String(anime[2] || '').split(' • ');
 
   sheet.innerHTML =
     '<div class="sh-top" id="shtop" ' +
@@ -2013,24 +1923,15 @@ function openSheet(i) {
     '<div class="sh-b">' +
 
       '<div class="chips">' +
-
-        '<span class="r">★ ' +
-        anime[0] +
-        '</span>' +
+        '<span class="r">★ ' + anime[0] + '</span>' +
 
         metadata.map(function (text) {
-          return (
-            '<span>' +
-            esc(text) +
-            '</span>'
-          );
+          return '<span>' + esc(text) + '</span>';
         }).join('') +
 
       '</div>' +
 
-      '<h2>' +
-      esc(anime[1]) +
-      '</h2>' +
+      '<h2>' + esc(anime[1]) + '</h2>' +
 
       (
         anime[7]
@@ -2055,24 +1956,22 @@ function openSheet(i) {
       'style="display:none;margin:10px 0">' +
 
         '<small id="playback-status" ' +
+        'aria-live="polite" ' +
         'style="display:block;margin-bottom:8px;' +
-        'overflow-wrap:anywhere" ' +
-        'aria-live="polite"></small>' +
+        'overflow-wrap:anywhere"></small>' +
 
         '<button class="btn sm" onclick="paint(true)">' +
-          '↻ Retry / Refresh stream' +
+          '↻ Retry current selection' +
         '</button>' +
 
-        '<div id="hindi-source-tools" ' +
+        '<div id="source-tools" ' +
         'style="margin-top:10px"></div>' +
 
       '</div>' +
 
       '<div id="np"></div>' +
 
-      '<h4 id="eh" style="display:none">' +
-        'EPISODES' +
-      '</h4>' +
+      '<h4 id="eh" style="display:none">EPISODES</h4>' +
 
       '<div class="eps" id="eps"></div>' +
       '<div id="cm"></div>' +
@@ -2083,13 +1982,9 @@ function openSheet(i) {
   sheet.scrollTop = 0;
   sheet.classList.add('on');
 
-  var overlay = document.getElementById(
-    'ov'
-  );
+  var overlay = document.getElementById('ov');
 
-  if (overlay) {
-    overlay.classList.add('on');
-  }
+  if (overlay) overlay.classList.add('on');
 
   document.body.style.overflow = 'hidden';
 
@@ -2099,11 +1994,14 @@ function openSheet(i) {
 
 function play(episode) {
   if (episode) {
-    SH.e = Number(episode);
+    var nextEpisode = Number(episode);
 
-    SH.pg = Math.floor(
-      (SH.e - 1) / PG
-    );
+    if (nextEpisode !== SH.e) {
+      SH.src = null;
+    }
+
+    SH.e = nextEpisode;
+    SH.pg = Math.floor((SH.e - 1) / PG);
   }
 
   SH.play = 1;
@@ -2113,29 +2011,23 @@ function play(episode) {
 function eN() {
   var anime = ALL[SH.i];
 
-  var metadata = isHindi(SH.l)
-    ? metadataFor(anime)
+  var meta = isHindi(SH.l)
+    ? currentHindiMetadata(anime)
     : null;
 
-  if (
-    metadata &&
-    metadata.total > 0
-  ) {
-    return metadata.total;
+  if (meta && meta.total > 0) {
+    return meta.total;
   }
 
   return EPN[anime[1]] || 12;
 }
 
 function mlbtn() {
-  var button = document.getElementById(
-    'ml'
-  );
+  var button = document.getElementById('ml');
 
   if (button) {
     button.textContent =
-      U &&
-      U.list.indexOf(ALL[SH.i][1]) > -1
+      U && U.list.indexOf(ALL[SH.i][1]) > -1
         ? '✓ In My List'
         : '+ My List';
   }
@@ -2150,11 +2042,8 @@ function toggleList(name) {
 
   var index = U.list.indexOf(name);
 
-  if (index > -1) {
-    U.list.splice(index, 1);
-  } else {
-    U.list.push(name);
-  }
+  if (index > -1) U.list.splice(index, 1);
+  else U.list.push(name);
 
   save();
   decorate();
@@ -2162,14 +2051,28 @@ function toggleList(name) {
 }
 
 function changePlayerLanguage(index) {
-  var available = playerLanguages();
+  var item = playerLanguages()[index];
+  if (!item) return;
 
-  if (!available[index]) return;
-
-  SH.l = available[index][0];
-  SH.hsrc = null;
+  SH.l = item[0];
+  SH.provider = 'auto';
+  SH.src = null;
 
   paint();
+}
+
+function changePlayerProvider(value) {
+  if (
+    value !== 'auto' &&
+    STREAM_PROVIDERS.indexOf(value) < 0
+  ) {
+    return;
+  }
+
+  SH.provider = value;
+  SH.src = null;
+
+  paint(true);
 }
 
 /* ================= RENDER ================= */
@@ -2178,22 +2081,18 @@ function paint(force) {
   var anime = ALL[SH.i];
   if (!anime) return;
 
+  var sheet = document.getElementById('sheet');
+  if (!sheet) return;
+
   var count = eN();
 
-  var metadata = isHindi(SH.l)
-    ? metadataFor(anime)
+  var meta = isHindi(SH.l)
+    ? currentHindiMetadata(anime)
     : null;
 
-  var seasonCount =
-    metadata && metadata.seasons > 0
-      ? metadata.seasons
-      : SEASONS[anime[1]] || 3;
-
-  var sheet = document.getElementById(
-    'sheet'
-  );
-
-  if (!sheet) return;
+  var seasons = meta && meta.seasons > 0
+    ? meta.seasons
+    : SEASONS[anime[1]] || 3;
 
   var page = Math.min(
     SH.pg || 0,
@@ -2203,21 +2102,16 @@ function paint(force) {
   document.getElementById('eh').style.display =
     SH.play ? '' : 'none';
 
-  var tools = document.getElementById(
-    'playback-tools'
-  );
+  var tools = document.getElementById('playback-tools');
 
   if (tools) {
-    tools.style.display =
-      SH.play ? '' : 'none';
+    tools.style.display = SH.play ? '' : 'none';
   }
 
   if (!SH.play) {
-    ['ctl', 'eps', 'cm', 'np'].forEach(
-      function (id) {
-        document.getElementById(id).innerHTML = '';
-      }
-    );
+    ['ctl', 'eps', 'np', 'cm'].forEach(function (id) {
+      document.getElementById(id).innerHTML = '';
+    });
 
     mlbtn();
     return;
@@ -2225,124 +2119,92 @@ function paint(force) {
 
   var needsPlayback =
     force === true ||
-    playbackIdentity() !== playbackKey;
+    stateKey() !== playbackKey;
 
-  var options = '';
-  var ranges = '';
+  var seasonOptions = '';
 
-  for (
-    var season = 1;
-    season <= seasonCount;
-    season++
-  ) {
-    options +=
-      '<option value="' +
-      season +
-      '"' +
-
-      (season === SH.s
-        ? ' selected'
-        : '') +
-
-      '>Season ' +
-      season +
-      '</option>';
+  for (var s = 1; s <= seasons; s++) {
+    seasonOptions +=
+      '<option value="' + s + '"' +
+      (s === SH.s ? ' selected' : '') +
+      '>Season ' + s + '</option>';
   }
 
+  var rangeOptions = '';
+
   if (count > PG) {
-    for (
-      var range = 0;
-      range * PG < count;
-      range++
-    ) {
-      ranges +=
-        '<option value="' +
-        range +
-        '"' +
+    for (var r = 0; r * PG < count; r++) {
+      rangeOptions +=
+        '<option value="' + r + '"' +
+        (r === page ? ' selected' : '') +
 
-        (range === page
-          ? ' selected'
-          : '') +
-
-        '>Ep ' +
-        (range * PG + 1) +
-
-        '–' +
-
-        Math.min(
-          count,
-          (range + 1) * PG
-        ) +
+        '>Ep ' + (r * PG + 1) +
+        '–' + Math.min(count, (r + 1) * PG) +
 
         '</option>';
     }
 
-    ranges =
+    rangeOptions =
       '<select class="sel" ' +
       'onchange="SH.pg=+this.value;paint()" ' +
       'aria-label="Episode range">' +
-
-      ranges +
-
+      rangeOptions +
       '</select>';
+  }
+
+  var providerControl = '';
+
+  if (isHindi(SH.l)) {
+    providerControl =
+      '<small style="display:block;margin:8px 0">' +
+      'Provider: Hindi API. ' +
+      'Sub/Dub providers are not used as Hindi fallback.' +
+      '</small>';
+  } else {
+    var providerOptions =
+      '<option value="auto"' +
+      (SH.provider === 'auto' ? ' selected' : '') +
+      '>Auto · try available providers</option>';
+
+    STREAM_PROVIDERS.forEach(function (provider) {
+      providerOptions +=
+        '<option value="' + provider + '"' +
+        (SH.provider === provider ? ' selected' : '') +
+        '>' + provider + '</option>';
+    });
+
+    providerControl =
+      '<label style="display:block;margin:8px 0">' +
+        'Provider ' +
+        '<select class="sel" ' +
+        'aria-label="Provider" ' +
+        'onchange="changePlayerProvider(this.value)">' +
+          providerOptions +
+        '</select>' +
+      '</label>';
   }
 
   document.getElementById('ctl').innerHTML =
     '<select class="sel" ' +
+    'aria-label="Season" ' +
+    'onchange="SH.s=+this.value;SH.e=1;' +
+    'SH.pg=0;SH.src=null;paint()">' +
 
-    'onchange="SH.s=+this.value;' +
-    'SH.e=1;SH.pg=0;SH.hsrc=null;paint()" ' +
-
-    'aria-label="Season">' +
-
-      options +
+      seasonOptions +
 
     '</select>' +
 
     '<div class="seg">' +
 
-      playerLanguages().map(
-        function (language, index) {
-          return (
-            '<button class="' +
-
-            (
-              language[0] === SH.l
-                ? 'on'
-                : ''
-            ) +
-
-            '" onclick="changePlayerLanguage(' +
-            index +
-            ')">' +
-
-            esc(language[1]) +
-
-            '</button>'
-          );
-        }
-      ).join('') +
-
-    '</div>' +
-
-    '<div class="seg">' +
-
-      [0, 1].map(function (server) {
+      playerLanguages().map(function (item, index) {
         return (
           '<button class="' +
+          (item[0] === SH.l ? 'on' : '') +
 
-          (
-            server === SH.v
-              ? 'on'
-              : ''
-          ) +
+          '" onclick="changePlayerLanguage(' +
+          index + ')">' +
 
-          '" onclick="SH.v=' +
-          server +
-          ';SH.hsrc=null;paint(true)">' +
-
-          'Server 0' +
-          (server + 1) +
+          esc(item[1]) +
 
           '</button>'
         );
@@ -2350,30 +2212,21 @@ function paint(force) {
 
     '</div>' +
 
-    ranges;
+    providerControl +
+    rangeOptions;
 
-  var episodes = '';
+  var episodeButtons = '';
 
   for (
     var episode = page * PG + 1;
-    episode <= Math.min(
-      count,
-      page * PG + PG
-    );
+    episode <= Math.min(count, page * PG + PG);
     episode++
   ) {
-    episodes +=
+    episodeButtons +=
       '<button class="' +
+      (episode === SH.e ? 'on' : '') +
 
-      (
-        episode === SH.e
-          ? 'on'
-          : ''
-      ) +
-
-      '" onclick="play(' +
-      episode +
-      ')">' +
+      '" onclick="play(' + episode + ')">' +
 
       episode +
 
@@ -2381,42 +2234,25 @@ function paint(force) {
   }
 
   document.getElementById('eps').innerHTML =
-    episodes;
+    episodeButtons;
 
   document.getElementById('np').innerHTML =
     '<div class="np">' +
 
-      '<span>▶ S' +
-      SH.s +
-      ' · Episode ' +
-      SH.e +
-      '</span>' +
+      '<span>▶ S' + SH.s +
+      ' · Episode ' + SH.e + '</span>' +
 
       '<div>' +
 
         '<button ' +
-
-        (
-          SH.e < 2
-            ? 'disabled '
-            : ''
-        ) +
-
-        'onclick="play(' +
-        (SH.e - 1) +
-        ')">‹ Prev</button>' +
+        (SH.e < 2 ? 'disabled ' : '') +
+        'onclick="play(' + (SH.e - 1) + ')">' +
+        '‹ Prev</button>' +
 
         '<button ' +
-
-        (
-          SH.e >= count
-            ? 'disabled '
-            : ''
-        ) +
-
-        'onclick="play(' +
-        (SH.e + 1) +
-        ')">Next ›</button>' +
+        (SH.e >= count ? 'disabled ' : '') +
+        'onclick="play(' + (SH.e + 1) + ')">' +
+        'Next ›</button>' +
 
       '</div>' +
 
@@ -2431,10 +2267,7 @@ function paint(force) {
   sheet.classList.add('pm');
 
   if (needsPlayback) {
-    beginPlayback(
-      anime,
-      force === true
-    );
+    beginPlayback(anime, force === true);
   }
 }
 
@@ -2443,48 +2276,31 @@ function paint(force) {
 function decorate() {
   document.querySelectorAll('.card').forEach(
     function (card, index) {
+      /*
+       * Retains your existing card-to-ALL ordering.
+       */
       var anime = ALL[index];
       if (!anime) return;
 
-      var poster = card.querySelector(
-        '.poster'
-      );
+      var poster = card.querySelector('.poster');
+      var bookmark = card.querySelector('.bm');
 
-      var bookmark = card.querySelector(
-        '.bm'
-      );
+      var local = hasVid(anime[1]);
 
-      var local = hasVid(
-        anime[1]
-      );
-
-      /*
-       * Hindi API can search by title, so an AniList
-       * ID is not required just to offer Watch.
-       * This does not verify stream availability.
-       */
-      var canSearch =
+      var searchable =
         getAnimeId(anime) !== null ||
         !!String(anime[1] || '').trim();
 
-      var showWatch =
-        local || canSearch;
+      var showWatch = local || searchable;
 
       if (poster) {
-        var watch = poster.querySelector(
-          '.wbtn'
-        );
+        var watch = poster.querySelector('.wbtn');
 
-        poster.classList.toggle(
-          'hv',
-          showWatch
-        );
+        poster.classList.toggle('hv', showWatch);
 
         if (showWatch) {
           if (!watch) {
-            watch = document.createElement(
-              'button'
-            );
+            watch = document.createElement('button');
 
             watch.className = 'wbtn';
             watch.type = 'button';
@@ -2496,16 +2312,12 @@ function decorate() {
 
           watch.setAttribute(
             'aria-label',
-            'Watch ' +
-            String(anime[1] || 'anime')
+            'Watch ' + String(anime[1] || 'anime')
           );
 
           watch.title = local
-            ? 'Watch available video'
-            : (
-                'Search providers; ' +
-                'availability not verified'
-              );
+            ? 'Watch saved video'
+            : 'Search providers; availability not verified';
 
           watch.onclick = function (event) {
             event.preventDefault();
@@ -2522,8 +2334,7 @@ function decorate() {
       if (bookmark) {
         bookmark.classList.toggle(
           'on',
-          !!U &&
-          U.list.indexOf(anime[1]) > -1
+          !!U && U.list.indexOf(anime[1]) > -1
         );
 
         bookmark.onclick = function (event) {
@@ -2541,16 +2352,14 @@ function decorate() {
 
 function ck() {
   return (
-    'akC:' +
-    ALL[SH.i][1] +
+    'akC:' + ALL[SH.i][1] +
     ':' + SH.s +
     ':' + SH.e
   );
 }
 
 function ago(time) {
-  var seconds =
-    (Date.now() - time) / 1000;
+  var seconds = (Date.now() - time) / 1000;
 
   return seconds < 60
     ? 'just now'
@@ -2565,12 +2374,8 @@ function cmt() {
   var list = ls(ck()) || [];
 
   var html =
-    '<h4>COMMENTS · S' +
-    SH.s +
-
-    ' E' +
-    SH.e +
-
+    '<h4>COMMENTS · S' + SH.s +
+    ' E' + SH.e +
     ' <span class="cnt">' +
     list.length +
     '</span></h4>';
@@ -2598,51 +2403,34 @@ function cmt() {
         return (
           '<div class="cmt">' +
 
-          av(
-            USERS[comment.e] || {},
-            34
-          ) +
+          av(USERS[comment.e] || {}, 34) +
 
           '<div>' +
 
-            '<b>' +
-            esc(comment.n) +
-            '</b>' +
-
-            '<small>' +
-            ago(comment.t) +
-            '</small>' +
-
-            '<p>' +
-            esc(comment.x) +
-            '</p>' +
+            '<b>' + esc(comment.n) + '</b>' +
+            '<small>' + ago(comment.t) + '</small>' +
+            '<p>' + esc(comment.x) + '</p>' +
 
             '<button class="lk' +
 
             (
-              U &&
-              likes.indexOf(U.email) > -1
+              U && likes.indexOf(U.email) > -1
                 ? ' on'
                 : ''
             ) +
 
-            '" onclick="likeC(' +
-            index +
-            ')">' +
+            '" onclick="likeC(' + index + ')">' +
 
-            '♥ ' +
-            likes.length +
+              '♥ ' + likes.length +
 
             '</button>' +
 
             (
-              U &&
-              comment.e === U.email
+              U && comment.e === U.email
                 ? (
                     '<button class="lk" ' +
-                    'onclick="delC(' +
-                    index +
-                    ')">Delete</button>'
+                    'onclick="delC(' + index + ')">' +
+                    'Delete</button>'
                   )
                 : ''
             ) +
@@ -2655,19 +2443,15 @@ function cmt() {
         'No comments yet. Be the first!</p>'
       );
 
-  document.getElementById('cm').innerHTML =
-    html;
+  document.getElementById('cm').innerHTML = html;
 }
 
 function postC() {
-  var input = document.getElementById(
-    'ct'
-  );
+  var input = document.getElementById('ct');
 
   if (!input || !U) return;
 
   var text = input.value.trim();
-
   if (!text) return;
 
   var key = ck();
@@ -2681,11 +2465,7 @@ function postC() {
     l: []
   });
 
-  ls(
-    key,
-    list.slice(0, 100)
-  );
-
+  ls(key, list.slice(0, 100));
   cmt();
 }
 
@@ -2703,9 +2483,7 @@ function likeC(index) {
 
   comment.l = comment.l || [];
 
-  var position = comment.l.indexOf(
-    U.email
-  );
+  var position = comment.l.indexOf(U.email);
 
   if (position > -1) {
     comment.l.splice(position, 1);
@@ -2738,42 +2516,38 @@ function delC(index) {
 
 /* ================= EVENTS ================= */
 
-document.addEventListener(
-  'click',
-  function (event) {
-    if (
-      !event.target.closest('.search') &&
-      typeof sr !== 'undefined' &&
-      sr
-    ) {
-      sr.className = '';
-    }
+document.addEventListener('click', function (event) {
+  if (
+    !event.target.closest('.search') &&
+    typeof sr !== 'undefined' &&
+    sr
+  ) {
+    sr.className = '';
+  }
+});
+
+document.querySelectorAll('.arr button').forEach(
+  function (button) {
+    button.onclick = function () {
+      var row = document.getElementById(
+        button.dataset.r
+      );
+
+      if (!row) return;
+
+      row.scrollBy({
+        left:
+          Number(button.dataset.d) *
+          row.clientWidth *
+          0.9,
+
+        behavior: 'smooth'
+      });
+    };
   }
 );
 
-document.querySelectorAll(
-  '.arr button'
-).forEach(function (button) {
-  button.onclick = function () {
-    var row = document.getElementById(
-      button.dataset.r
-    );
-
-    if (!row) return;
-
-    row.scrollBy({
-      left:
-        Number(button.dataset.d) *
-        row.clientWidth *
-        0.9,
-
-      behavior: 'smooth'
-    });
-  };
-});
-
-var playerModalElement =
-  document.getElementById('mw');
+var playerModalElement = document.getElementById('mw');
 
 if (playerModalElement) {
   playerModalElement.addEventListener(
@@ -2786,40 +2560,28 @@ if (playerModalElement) {
   );
 }
 
-document.addEventListener(
-  'keydown',
-  function (event) {
-    if (event.key === 'Escape') {
-      closeM();
-    }
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape') {
+    closeM();
   }
-);
+});
 
-var existingSheet =
-  document.getElementById('sheet');
+var existingSheet = document.getElementById('sheet');
 
 if (existingSheet) {
   new MutationObserver(function () {
-    if (
-      !existingSheet.classList.contains('on')
-    ) {
+    if (!existingSheet.classList.contains('on')) {
       stopPlayback();
     }
-  }).observe(
-    existingSheet,
-    {
-      attributes: true,
-      attributeFilter: ['class']
-    }
-  );
+  }).observe(existingSheet, {
+    attributes: true,
+    attributeFilter: ['class']
+  });
 }
 
-window.addEventListener(
-  'pagehide',
-  function () {
-    stopPlayback();
-  }
-);
+window.addEventListener('pagehide', function () {
+  stopPlayback();
+});
 
 /* ================= INITIALIZE ================= */
 
