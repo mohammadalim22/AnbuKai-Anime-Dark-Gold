@@ -1,435 +1,130 @@
-document.addEventListener('click', function (e) {
-  if (!e.target.closest('.search')) sr.className = '';
-});
+/* COMPLETE player.js â€” replace the old file, do not append.
+   Uses the existing site's ALL, VIDEOS, EPN, SEASONS, LANGS, C, U,
+   USERS, DP, esc, ls, av, save, toast, authView, closeSheet, closeM,
+   ub and applyTheme. No HTML script tags belong in this file.
+   Hindi integration follows ZeroTwo-Py/anime-api documentation.
+   Live API/CORS/playback availability has not been verified. */
 
-document.querySelectorAll('.arr button').forEach(function (b) {
-  b.onclick = function () {
-    var r = document.getElementById(b.dataset.r);
-    if (r) r.scrollBy({ left: Number(b.dataset.d) * r.clientWidth * 0.9, behavior: 'smooth' });
-  };
-});
+var SH = {}, PG = 100;
+var STREAM_API = 'https://anivexa-api-wi89.onrender.com';
+var HINDI_API = 'https://anime-api-uzlk.vercel.app';
+var STREAM_PROVIDERS = ['anikoto','reanime','kaa','senshi','anizone','aniwaves'];
+var activeHls = null, activePlayback = null, playerRun = 0, playbackKey = '';
+var hlsLibraryPromise = null;
+var hindiChoices = new Map(), hindiMetadata = new Map(), hindiRequests = new Map();
+var hindiCache = new Map(), HINDI_CACHE_LIMIT = 50;
 
-document.querySelectorAll('.bm').forEach(function (b) {
-  b.onclick = function (e) {
-    e.stopPropagation();
-    b.classList.toggle('on');
-  };
-});
+function hasVid(name){var a=typeof VIDEOS!=='undefined'&&VIDEOS[name];return !!a&&Object.keys(a).length>0;}
+function vurl(name,s,e,l,v){var a=typeof VIDEOS!=='undefined'&&VIDEOS[name],x=a&&a[s]&&a[s][e]&&a[s][e][l];return x&&x[v]||'';}
+function cu(url){return encodeURI(url).replace(/[()']/g,function(c){return '%'+c.charCodeAt(0).toString(16);});}
+function safeStreamUrl(value,base){if(typeof value!=='string'||!value.trim())return '';try{var u=new URL(value,base||STREAM_API+'/');return /^https?:$/.test(u.protocol)?u.href:'';}catch(e){return '';}}
+function getAnimeId(a){if(!a)return null;var values=[a[10],a.id];for(var i=0;i<values.length;i++){var n=Number(values[i]);if(Number.isInteger(n)&&n>0)return n;}return null;}
+function inferStreamType(url,hint){hint=String(hint||'').toLowerCase();if(/\.m3u8(?:[?#]|$)/i.test(url))return 'hls';if(hint==='iframe'||hint==='embed')return 'iframe';if(/hls|mpegurl/.test(hint))return 'hls';if(hint==='video'||hint.indexOf('video/')===0||/\.(mp4|webm|ogg)(?:[?#]|$)/i.test(url))return 'video';return 'iframe';}
+function delay(ms){return new Promise(function(resolve){setTimeout(resolve,ms);});}
+function providerOrder(server){var first=Number(server)===1?'reanime':'anikoto';return [first].concat(STREAM_PROVIDERS.filter(function(p){return p!==first;}));}
+function titleKey(name){return String(name||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();}
+function hindiKey(a){return String(getAnimeId(a)||'')+'|'+String(a[1]);}
+function languages(){var out=[['hi','Hindi']],seen=new Set(['hi','hindi']);var list=typeof LANGS!=='undefined'?LANGS:[['sub','Sub'],['dub','Dub']];list.forEach(function(x){if(!seen.has(String(x[0]).toLowerCase())){seen.add(String(x[0]).toLowerCase());out.push(x);}});return out;}
+function isHindi(l){return /^(hi|hindi)$/i.test(String(l));}
+function playbackIdentity(){return [SH.i,SH.s,SH.e,SH.l,SH.v,SH.hsrc===null?'auto':SH.hsrc].join('|');}
 
-var SH = {};
-var PG = 100;
+async function fetchWithTimeout(url,options){options=options||{};var controller=new AbortController(),settings=Object.assign({},options),timeout=settings.timeout||15000;delete settings.timeout;settings.signal=controller.signal;var timer=setTimeout(function(){controller.abort();},timeout);try{return await fetch(url,settings);}finally{clearTimeout(timer);}}
+async function requestJson(url,fresh){var response=await fetchWithTimeout(url,{timeout:15000,cache:fresh?'no-store':'default'});if(!response.ok)throw new Error('API HTTP '+response.status);var data;try{data=await response.json();}catch(e){throw new Error('API returned non-JSON content');}if(data&&data.success===false)throw new Error(String(data.message||data.mmessage||'API reported failure'));return data;}
+function normalizeStreams(data,base){var result=[],seen=new Set();function add(value,hint,special,label){var url=safeStreamUrl(value,base);if(!url)return;var type=inferStreamType(url,hint),key=type+':'+url;if(seen.has(key))return;seen.add(key);result.push({type:type,url:url,specialHls:!!special&&type==='hls',label:label||''});}function visit(x,depth,inherited,label){if(!x||depth>5)return;if(typeof x==='string'){add(x,'',inherited,label);return;}if(Array.isArray(x)){x.forEach(function(y){visit(y,depth+1,inherited,label);});return;}if(typeof x!=='object')return;var special=inherited||!!x.playlist_key||!!x.playlistKey;label=x.server||x.label||label;[x.embedUrl,x.embed_url,x.embed,x.iframe].forEach(function(v){if(typeof v==='string')add(v,'iframe',false,label);else if(v&&typeof v==='object')add(v.url||v.src,'iframe',false,label);});var url=x.url||x.file||x.src;if(url)add(url,x.type||x.format||x.mimeType,special,label);['streams','sources','data','results','stream'].forEach(function(k){if(x[k])visit(x[k],depth+1,special,label);});}visit(data,0,false,'');return result;}
+async function fetchProviderStreams(provider,id,episode,audio,fresh){var episodeId=provider+'-'+episode;var url=STREAM_API+'/watch/'+encodeURIComponent(provider)+'/'+encodeURIComponent(id)+'/'+encodeURIComponent(audio)+'/'+encodeURIComponent(episodeId);var streams=normalizeStreams(await requestJson(url,fresh),STREAM_API+'/');if(!streams.length)throw new Error(provider+': no usable streams');return streams.sort(function(a,b){var p={iframe:0,hls:1,video:2};return p[a.type]-p[b.type];});}
 
-// APIs
-var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub (Render)
-var HINDI_API = 'https://anime-api-uzlk.vercel.app'; // Hindi (Vercel)
+/* Hindi IDs are provider slugs, NOT AniList IDs. */
+function hindiApi(path,params,ttl,fresh){var url=new URL(HINDI_API+path);Object.keys(params||{}).forEach(function(k){url.searchParams.set(k,params[k]);});var key=url.href,cached=hindiCache.get(key);if(!fresh&&cached&&cached.until>Date.now())return Promise.resolve(cached.data);if(hindiRequests.has(key))return hindiRequests.get(key);var p=requestJson(key,fresh).then(function(data){if(ttl){hindiCache.delete(key);hindiCache.set(key,{until:Date.now()+ttl,data:data});while(hindiCache.size>HINDI_CACHE_LIMIT)hindiCache.delete(hindiCache.keys().next().value);}return data;});hindiRequests.set(key,p);p.then(function(){hindiRequests.delete(key);},function(){hindiRequests.delete(key);});return p;}
+function searchRows(data){var x=data&&data.results;if(Array.isArray(x))return x;if(x&&Array.isArray(x.results))return x.results;if(data&&Array.isArray(data.data))return data.data;return [];}
+function metadataFor(a){var choice=hindiChoices.get(hindiKey(a));return choice?hindiMetadata.get(choice.id+'|'+SH.s):null;}
+function chooseHindiMatch(key,id,title){hindiChoices.set(key,{id:id,title:title});SH.hsrc=null;paint(true);}
+function showHindiMatches(a,rows,session){if(!playerIsCurrent(session.run))return;destroyPlayer();var top=preparePlayerTop(),box=document.createElement('div');box.className='nov';box.style.cssText='max-height:100%;overflow:auto;padding:20px';var heading=document.createElement('span');heading.textContent='Choose the correct Hindi catalogue title';box.appendChild(heading);rows.forEach(function(row){var b=document.createElement('button');b.className='btn sm';b.style.cssText='display:block;margin:8px auto;max-width:100%;white-space:normal';b.textContent=String(row.title);b.onclick=function(){if(playerIsCurrent(session.run))chooseHindiMatch(hindiKey(a),String(row.anime_id),String(row.title));};box.appendChild(b);});top.appendChild(box);appendPlayerClose(top);updatePlaybackStatus('Title match needs confirmation. Do not choose a different season/title by mistake.');}
+async function resolveHindiTitle(a,session){var key=hindiKey(a),choice=hindiChoices.get(key);if(choice)return choice;var data=await hindiApi('/api/search',{s:String(a[1]),page:1},300000,false);if(!playerIsCurrent(session.run))return null;var rows=searchRows(data).filter(function(r){return r&&r.title&&r.anime_id;});var unique=new Map();rows.forEach(function(r){unique.set(String(r.anime_id),r);});rows=Array.from(unique.values());var exact=rows.filter(function(r){return titleKey(r.title)===titleKey(a[1]);});if(exact.length===1){choice={id:String(exact[0].anime_id),title:String(exact[0].title)};hindiChoices.set(key,choice);return choice;}if(!rows.length)throw new Error('No Hindi catalogue result for this title. A translated/alternate title may be needed.');showHindiMatches(a,rows.slice(0,20),session);return null;}
+async function loadHindiMetadata(choice,session){var season=session.state.s;var responses=await Promise.allSettled([hindiApi('/api/info',{id:choice.id},300000,false),hindiApi('/api/episodes',{id:choice.id,season:season},300000,false)]);if(!playerIsCurrent(session.run))return null;var info={},episodes=[],total=0,seasons=0,knownEpisodes=false;if(responses[0].status==='fulfilled'){var d=responses[0].value;info=d.data||d.results||{};seasons=parseInt(info.seasons,10)||0;}if(responses[1].status==='fulfilled'){var d2=responses[1].value;var body=d2.results||d2.data||{};if(Array.isArray(body.episodes)){episodes=body.episodes;knownEpisodes=true;}total=parseInt(body.totalEpisodes,10)||episodes.length;}var language=String(info.language||info.languages||'');var meta={seasons:seasons,total:total,episodes:episodes,knownEpisodes:knownEpisodes,language:language};hindiMetadata.set(choice.id+'|'+season,meta);paint();if(language&&!/hindi|\bhin\b/i.test(language))throw new Error('This catalogue entry does not list Hindi audio. No non-Hindi fallback was selected.');if(seasons&&season>seasons)throw new Error('Selected season is not listed for this Hindi title');if(knownEpisodes&&!episodes.some(function(e){return Number(e.episode)===session.state.e;}))throw new Error('Selected episode is not listed for this Hindi season');return meta;}
+function drawHindiSources(streams,session){if(!playerIsCurrent(session.run))return;var holder=document.getElementById('hindi-source-tools');if(!holder)return;holder.replaceChildren();var label=document.createElement('small');label.textContent='Hindi catalogue sources (embedded player may contain multiple audio tracks):';label.style.display='block';var select=document.createElement('select');select.className='sel';select.setAttribute('aria-label','Hindi source');streams.forEach(function(s,i){var option=document.createElement('option');option.value=i;option.textContent='Source '+(i+1)+(s.label?' Â· '+s.label:'');select.appendChild(option);});select.value=String(session.sourceIndex);select.onchange=function(){SH.hsrc=Number(select.value);paint(true);};var rematch=document.createElement('button');rematch.className='btn sm';rematch.textContent='Change title match';rematch.onclick=function(){hindiChoices.delete(hindiKey(session.anime));SH.hsrc=null;paint(true);};holder.append(label,select,rematch);}
+async function playHindi(session,tryStream){showPlayerMessage('Finding Hindi title...',String(session.anime[1]));var choice=await resolveHindiTitle(session.anime,session);if(!choice||!playerIsCurrent(session.run))return;showPlayerMessage('Checking Hindi season...',choice.title+' Â· Season '+session.state.s);await loadHindiMetadata(choice,session);if(!playerIsCurrent(session.run))return;showPlayerMessage('Loading Hindi sources...',choice.title+' Â· Episode '+session.state.e);var data=await hindiApi('/api/stream',{id:choice.id,season:session.state.s,ep:session.state.e},0,true);if(!playerIsCurrent(session.run))return;var streams=normalizeStreams(data,HINDI_API+'/');if(!streams.length)throw new Error('Hindi API returned no usable sources');var index=session.state.hsrc===null?Number(session.state.v):Number(session.state.hsrc);if(index>=streams.length)throw new Error('Requested Hindi source is not available. Select Server 01 or another source.');session.sourceIndex=index;drawHindiSources(streams,session);if(await tryStream(streams[index],'Hindi Â· '+(streams[index].label||('Source '+(index+1)))))return;throw new Error('This Hindi source failed. Choose another source from the list below the player.');}
 
-var STREAM_PROVIDERS = ['anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves'];
-
-var activeHls = null;
-var playerRun = 0;
-
-async function fetchWithTimeout(url, options) {
-  options = options || {};
-  var controller = new AbortController();
-  var settings = Object.assign({}, options);
-  var timeout = settings.timeout || 15000;
-  delete settings.timeout;
-  settings.signal = controller.signal;
-  var timer = setTimeout(function () { controller.abort(); }, timeout);
-  try { return await fetch(url, settings); } finally { clearTimeout(timer); }
-}
-
-function safeStreamUrl(value) {
-  if (typeof value !== 'string' || !value.trim()) return '';
-  try {
-    var url = new URL(value, STREAM_API + '/');
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
-    return url.href;
-  } catch (error) { return ''; }
-}
-
-function isHlsUrl(url) { return /\.m3u8(?:[?#]|$)/i.test(url); }
-
-function inferStreamType(url, hint) {
-  hint = String(hint || '').toLowerCase();
-  if (isHlsUrl(url)) return 'hls';
-  if (hint === 'iframe' || hint === 'embed') return 'iframe';
-  if (/hls|mpegurl/.test(hint)) return 'hls';
-  if (hint === 'video' || hint.indexOf('video/') === 0 || /\.(mp4|webm|ogg)(?:[?#]|$)/i.test(url)) return 'video';
-  return 'iframe';
-}
-
-function providerOrder(server) {
-  var first = Number(server) === 1 ? 'reanime' : 'anikoto';
-  return [first].concat(STREAM_PROVIDERS.filter(function (provider) { return provider !== first; }));
-}
-
-// ==========================================
-// 1. SUB & DUB LOGIC (Anivexa API)
-// ==========================================
-async function fetchProviderStreams(provider, anilistId, episode, audio) {
-  var episodeId = provider + '-' + episode;
-  var url = STREAM_API + '/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
-  var response = await fetchWithTimeout(url, { timeout: 15000 });
-  if (!response.ok) throw new Error(provider + ': API HTTP ' + response.status);
-  var data = await response.json();
-  return normalizeStreams(data);
-}
-
-// ==========================================
-// 2. HINDI LOGIC (Vercel API)
-// ==========================================
-async function getHindiStream(animeTitle, season, episode) {
-  try {
-    // ধাপ ১: অ্যানিমের নাম দিয়ে সার্চ করা
-    var searchUrl = HINDI_API + '/api/search?s=' + encodeURIComponent(animeTitle) + '&page=1';
-    var searchRes = await fetchWithTimeout(searchUrl, { timeout: 15000 });
-    if (!searchRes.ok) throw new Error('Search failed');
-    
-    var searchData = await searchRes.json();
-    if (!searchData.success || !searchData.results || !searchData.results.results || searchData.results.results.length === 0) {
-      throw new Error('Anime not found in Hindi library');
-    }
-    
-    // ধাপ ২: প্রথম রেজাল্ট থেকে anime_id নেওয়া
-    var animeId = searchData.results.results[0].anime_id;
-    
-    // ধাপ ৩: anime_id দিয়ে স্ট্রিম লিংক আনা
-    var streamUrl = HINDI_API + '/api/stream?id=' + encodeURIComponent(animeId) + '&season=' + season + '&ep=' + episode;
-    var streamRes = await fetchWithTimeout(streamUrl, { timeout: 15000 });
-    if (!streamRes.ok) throw new Error('Stream fetch failed');
-    
-    var streamData = await streamRes.json();
-    if (streamData.success && streamData.results && streamData.results.length > 0) {
-      // এম্বেড লিংক রিটার্ন করা
-      return streamData.results[0].embed;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Hindi API Error:', error);
-    return null;
-  }
-}
-
-// ==========================================
-// 3. HELPER FUNCTIONS
-// ==========================================
-function normalizeStreams(data) {
-  var result = [];
-  var seen = new Set();
-  function add(value, hint) {
-    var url = safeStreamUrl(value);
-    if (!url) return;
-    var type = inferStreamType(url, hint);
-    var key = type + ':' + url;
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push({ type: type, url: url });
-  }
-  function visit(item) {
-    if (!item) return;
-    if (typeof item === 'string') { add(item); return; }
-    if (Array.isArray(item)) { item.forEach(visit); return; }
-    if (typeof item !== 'object') return;
-    if (item.embedUrl) add(item.embedUrl, 'iframe');
-    if (item.embed) add(item.embed, 'iframe');
-    var url = item.url || item.file || item.src;
-    if (url) add(url, item.type || item.format);
-    ['streams', 'sources', 'data', 'results'].forEach(function (key) {
-      if (item[key]) visit(item[key]);
-    });
-  }
-  visit(data);
-  return result.sort(function (a, b) { return { iframe: 0, hls: 1, video: 2 }[a.type] - { iframe: 0, hls: 1, video: 2 }[b.type]; });
-}
-
-function playerIsCurrent(run) {
-  var sheet = document.getElementById('sheet');
-  return !!(run === playerRun && sheet && sheet.classList.contains('on') && SH.play);
-}
-
-function destroyPlayer() {
-  var top = document.getElementById('shtop');
-  if (activeHls) { try { activeHls.destroy(); } catch (e) {} activeHls = null; }
-  if (!top) return;
-  var video = top.querySelector('video');
-  if (video) { video.onended = null; try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {} }
-  var iframe = top.querySelector('iframe');
-  if (iframe) iframe.remove();
-}
-
-function stopPlayback() {
-  playerRun++;
-  destroyPlayer();
-}
-
-function preparePlayerTop() {
-  var top = document.getElementById('shtop');
-  if (!top) return null;
-  top.className = 'sh-top pl';
-  top.removeAttribute('style');
-  top.replaceChildren();
-  return top;
-}
-
-function showPlayerMessage(title, detail) {
-  var top = preparePlayerTop();
-  if (!top) return;
-  var box = document.createElement('div');
-  box.className = 'nov';
-  box.innerHTML = '<b>⏳</b><span>' + title + '</span><small>' + (detail || '') + '</small>';
-  top.appendChild(box);
-}
-
-async function mountStream(stream, run) {
-  if (!playerIsCurrent(run)) throw new Error('Playback cancelled');
-  destroyPlayer();
-  var top = preparePlayerTop();
-  if (!top) throw new Error('Player container missing');
-
-  if (stream.type === 'iframe') {
-    var frame = document.createElement('iframe');
-    frame.src = stream.url;
-    frame.allow = 'autoplay; fullscreen; picture-in-picture';
-    frame.allowFullscreen = true;
-    frame.style.cssText = 'width:100%;height:100%;border:0';
-    top.appendChild(frame);
-    return;
-  }
-
-  var video = document.createElement('video');
-  video.controls = true;
-  video.autoplay = true;
-  video.playsInline = true;
-  video.preload = 'auto';
-  video.style.cssText = 'width:100%;height:100%;background:#000';
-  video.onended = function () {
-    if (playerIsCurrent(run) && U && U.prefs.auto && SH.e < eN()) play(SH.e + 1);
-  };
-  top.appendChild(video);
-
-  return new Promise(function (resolve, reject) {
-    var settled = false;
-    var timer = setTimeout(function () { fail(new Error('Stream loading timed out')); }, 25000);
-    function succeed() { if (settled) return; settled = true; clearTimeout(timer); resolve(); }
-    function fail(err) { if (settled) return; settled = true; clearTimeout(timer); reject(err); }
-
-    video.addEventListener('loadeddata', succeed, { once: true });
-    video.addEventListener('error', function () { fail(new Error('Video failed to load')); });
-
-    if (stream.type === 'hls' && !video.canPlayType('application/vnd.apple.mpegurl')) {
-      if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-        var hls = new Hls();
-        activeHls = hls;
-        hls.loadSource(stream.url);
-        hls.attachMedia(video);
-      } else {
-        fail(new Error('HLS is not supported in this browser'));
-      }
-    } else {
-      video.src = stream.url;
-      video.load();
-    }
-    video.play().catch(function () {});
+/* HLS library */
+function loadHlsLibrary(){if(typeof Hls!=='undefined')return Promise.resolve();if(hlsLibraryPromise)return hlsLibraryPromise;hlsLibraryPromise=new Promise(function(resolve,reject){var script=document.createElement('script'),finished=false;var timer=setTimeout(function(){finish(new Error('HLS library timed out'));},15000);function finish(error){if(finished)return;finished=true;clearTimeout(timer);script.onload=script.onerror=null;if(error){script.remove();hlsLibraryPromise=null;reject(error);}else resolve();}script.src='https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';script.async=true;script.onload=function(){finish(typeof Hls==='undefined'?new Error('HLS unavailable'):null);};script.onerror=function(){finish(new Error('HLS download failed'));};document.head.appendChild(script);});return hlsLibraryPromise;}
+function warmHlsLibrary(){var v=document.createElement('video');if(!v.canPlayType('application/vnd.apple.mpegurl'))loadHlsLibrary().catch(function(){});}
+function playerIsCurrent(run){var sheet=document.getElementById('sheet');return !!(run===playerRun&&activePlayback&&!activePlayback.cancelled&&sheet&&sheet.classList.contains('on')&&SH.play);}
+function destroyPlayer(){var top=document.getElementById('shtop');if(activePlayback&&activePlayback.mediaCleanup){activePlayback.mediaCleanup();activePlayback.mediaCleanup=null;}if(activeHls){var old=activeHls;activeHls=null;try{old.destroy();}catch(e){}}if(!top)return;var v=top.querySelector('video');if(v){v.onended=null;try{v.pause();v.removeAttribute('src');v.load();}catch(e){}}var f=top.querySelector('iframe');if(f)f.remove();}
+function stopPlayback(){playerRun++;playbackKey='';if(activePlayback){activePlayback.cancelled=true;if(activePlayback.cancelAttempt)activePlayback.cancelAttempt();}destroyPlayer();activePlayback=null;}
+function preparePlayerTop(){var top=document.getElementById('shtop');if(top){top.className='sh-top pl';top.removeAttribute('style');top.replaceChildren();}return top;}
+function appendPlayerClose(top){var b=document.createElement('button');b.className='sh-x';b.textContent='âœ•';b.setAttribute('aria-label','Close');b.onclick=function(){stopPlayback();closeSheet();};top.appendChild(b);}
+function showPlayerMessage(title,detail,retry){var top=preparePlayerTop();if(!top)return;var box=document.createElement('div');box.className='nov';var h=document.createElement('span'),d=document.createElement('small');h.textContent=title;d.textContent=detail||'';box.append(h,d);if(retry){var b=document.createElement('button');b.className='btn sm';b.textContent='Retry';b.onclick=function(){paint(true);};box.appendChild(b);}top.appendChild(box);appendPlayerClose(top);}
+function updatePlaybackStatus(text){var el=document.getElementById('playback-status');if(el)el.textContent=text;}
+async function mountStream(stream,session,provider){
+  var run=session.run;if(!playerIsCurrent(run))throw new Error('Playback cancelled');destroyPlayer();var top=preparePlayerTop();if(!top)throw new Error('Player container missing');
+  if(stream.type==='iframe'){var frame=document.createElement('iframe');frame.src=stream.url;frame.title='Video player';frame.allow='autoplay; fullscreen; picture-in-picture';frame.allowFullscreen=true;frame.style.cssText='width:100%;height:100%;border:0';top.appendChild(frame);appendPlayerClose(top);updatePlaybackStatus('Source: '+provider+' Â· If playback fails inside, choose another source. For Hindi select Hindi audio in the embedded player if needed.');return {verified:false};}
+  var video=document.createElement('video');video.controls=true;video.autoplay=true;video.playsInline=true;video.preload='auto';video.style.cssText='width:100%;height:100%;background:#000';video.onended=function(){if(playerIsCurrent(run)&&U&&U.prefs.auto&&session.state.e<eN())play(session.state.e+1);};top.appendChild(video);appendPlayerClose(top);
+  return new Promise(function(resolve,reject){var settled=false,disposed=false,lateReported=false,localHls=null;var timer=setTimeout(function(){report(new Error('Stream loading timed out'));},20000);
+    function clearWait(){clearTimeout(timer);if(session.cancelAttempt===cancel)session.cancelAttempt=null;}
+    function cleanup(){if(disposed)return;disposed=true;clearWait();video.removeEventListener('loadeddata',ready);video.removeEventListener('error',videoError);if(localHls&&typeof Hls!=='undefined')localHls.off(Hls.Events.ERROR,hlsError);}
+    session.mediaCleanup=cleanup;
+    function cancel(){if(settled)return;settled=true;clearWait();reject(new Error('Playback cancelled'));}session.cancelAttempt=cancel;
+    function report(error){if(disposed)return;if(!playerIsCurrent(run)){cancel();return;}if(!settled){settled=true;clearWait();reject(error);return;}if(!lateReported){lateReported=true;if(!isHindi(session.state.l)&&session.recoveries<1){var excluded=session.excluded.slice();if(excluded.indexOf(stream.url)<0)excluded.push(stream.url);beginPlayback(session.anime,true,excluded,session.recoveries+1);}else{destroyPlayer();showPlayerMessage('Playback stopped',error.message+'. Choose another source or Retry.',true);updatePlaybackStatus(error.message);}}}
+    function ready(){if(disposed||settled)return;if(!playerIsCurrent(run)){cancel();return;}settled=true;clearWait();resolve({verified:true});}
+    function videoError(){report(new Error('Video failed'+(video.error?' (code '+video.error.code+')':'')));}
+    function hlsError(event,data){if(disposed||!playerIsCurrent(run))return;var status=data.response&&data.response.code;if(status===401||status===403||status===404||data.fatal)report(new Error(status?'Media HTTP '+status:'HLS: '+data.details));}
+    video.addEventListener('loadeddata',ready);video.addEventListener('error',videoError);
+    (async function(){try{if(stream.type==='hls'&&!video.canPlayType('application/vnd.apple.mpegurl')){await loadHlsLibrary();if(settled||disposed||!playerIsCurrent(run))return;if(!Hls.isSupported())throw new Error('HLS unsupported');localHls=new Hls();activeHls=localHls;localHls.on(Hls.Events.ERROR,hlsError);localHls.loadSource(stream.url);localHls.attachMedia(video);}else{video.src=stream.url;video.load();}var p=video.play();if(p&&p.catch)p.catch(function(){});}catch(e){report(e);}})();
   });
 }
-
-function openSheet(i) {
-  stopPlayback();
-  var a = ALL[i];
-  var p = U ? U.prefs : DP();
-  var c = C[i % 5];
-  var m = a[2].split(' • ');
-  var sh = document.getElementById('sheet');
-  var bn = a[4] || a[3];
-
-  SH = { i: i, s: 1, e: 1, l: p.lang, v: p.srv, play: 0, pg: 0 };
-
-  var bg = bn ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(bn) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + c + ',.5),transparent 70%),radial-gradient(60% 50% at 0% 100%,rgba(233,196,106,.2),transparent 70%),#0c0c14';
-
-  sh.innerHTML = '<div class="sh-top" id="shtop" style="background:' + bg + '"><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button></div><div class="sh-b"><div class="chips"><span class="r">★ ' + a[0] + '</span>' + m.map(function (text) { return '<span>' + esc(text) + '</span>'; }).join('') + '</div><h2>' + esc(a[1]) + '</h2>' + (a[7] ? '<p class="ds">' + esc(a[7]) + '</p>' : '') + '<div class="acts"><button class="btn" onclick="play()">▶ Watch Now</button><button class="btn g" id="ml" onclick="toggleList(ALL[SH.i][1])"></button></div><div id="ctl"></div><div id="np"></div><h4 id="eh" style="display:none">EPISODES</h4><div class="eps" id="eps"></div><div id="cm"></div></div>';
-
-  sh.classList.remove('pm');
-  sh.scrollTop = 0;
-  sh.classList.add('on');
-  document.getElementById('ov').classList.add('on');
-  document.body.style.overflow = 'hidden';
-  paint();
+function savePlaybackHistory(session){if(!playerIsCurrent(session.run)||session.historySaved||!U)return;session.historySaved=true;var s=session.state,n=session.anime[1];U.hist=(U.hist||[]).filter(function(h){return !(h.n===n&&h.s===s.s&&h.e===s.e);});U.hist.unshift({n:n,s:s.s,e:s.e});U.hist=U.hist.slice(0,50);save();}
+async function startPlayback(session){
+  var a=session.anime,s=session.state,run=session.run,lastError='No usable stream returned';
+  async function tryStream(stream,provider){if(!playerIsCurrent(run)||session.excluded.indexOf(stream.url)>=0)return false;if(stream.specialHls||(provider==='reanime'&&stream.type==='hls')){lastError='Special HLS requires supported embed/backend integration';return false;}updatePlaybackStatus('Loading: '+provider);try{var result=await mountStream(stream,session,provider);if(!playerIsCurrent(run))return false;if(result.verified){updatePlaybackStatus('Source: '+provider);savePlaybackHistory(session);}return true;}catch(e){if(!playerIsCurrent(run))return false;lastError=e.message;console.warn('Playback:',provider,e.message);destroyPlayer();return false;}}
+  var urls=[vurl(a[1],s.s,s.e,s.l,s.v),vurl(a[1],s.s,s.e,s.l,1-s.v)],seen=new Set();
+  for(var i=0;i<urls.length;i++){if(!playerIsCurrent(run))return;var url=safeStreamUrl(urls[i]);if(!url||seen.has(url))continue;seen.add(url);if(await tryStream({url:url,type:inferStreamType(url),specialHls:false},'Saved source'))return;}
+  if(isHindi(s.l)){try{await playHindi(session,tryStream);}catch(e){if(playerIsCurrent(run)){destroyPlayer();showPlayerMessage('Hindi source unavailable',e.message,true);updatePlaybackStatus(e.message+' Â· Browser CORS/network failures may also prevent API access.');}}return;}
+  var id=getAnimeId(a);if(!id){if(playerIsCurrent(run))showPlayerMessage('Video not found','No AniList ID or working saved stream. You can also try the Hindi tab.',true);return;}
+  var providers=providerOrder(s.v),audio=s.l==='dub'?'dub':'sub';
+  for(var p=0;p<providers.length;p++){var provider=providers[p];for(var attempt=0;attempt<2;attempt++){if(!playerIsCurrent(run))return;destroyPlayer();showPlayerMessage(attempt?'Refreshing stream...':'Loading stream...',provider+' Â· Attempt '+(attempt+1)+'/2');updatePlaybackStatus('Trying '+provider);if(attempt){await delay(900);if(!playerIsCurrent(run))return;}try{var streams=await fetchProviderStreams(provider,id,s.e,audio,attempt>0);if(!playerIsCurrent(run))return;var attempted=new Set();for(var j=0;j<streams.length;j++){if(!playerIsCurrent(run))return;if(attempted.has(streams[j].url))continue;attempted.add(streams[j].url);if(await tryStream(streams[j],provider))return;}}catch(e){if(!playerIsCurrent(run))return;lastError=e.message;if(/API HTTP (400|401|403|404|422)/.test(e.message))break;}}}
+  if(playerIsCurrent(run)){destroyPlayer();showPlayerMessage('No playable stream found',lastError+'. Source/backend may need repair.',true);updatePlaybackStatus(lastError);}
 }
+function beginPlayback(anime,force,excluded,recoveries){var key=playbackIdentity();if(!force&&playbackKey===key)return;stopPlayback();playbackKey=key;var session={run:playerRun,anime:anime,state:{i:SH.i,s:SH.s,e:SH.e,l:SH.l,v:SH.v,hsrc:SH.hsrc===undefined?null:SH.hsrc},cancelled:false,historySaved:false,excluded:excluded||[],recoveries:recoveries||0,cancelAttempt:null,mediaCleanup:null};activePlayback=session;var holder=document.getElementById('hindi-source-tools');if(holder)holder.replaceChildren();warmHlsLibrary();startPlayback(session).catch(function(e){if(!playerIsCurrent(session.run))return;destroyPlayer();showPlayerMessage('Player error',e.message,true);console.error(e);});}
 
-function play(k) {
-  if (k) { SH.e = Number(k); SH.pg = Math.floor((SH.e - 1) / PG); }
-  SH.play = 1;
-  paint();
+/* Existing sheet, controls and cards */
+function openSheet(i){
+  stopPlayback();var a=ALL[i];if(!a)return;var p=U?U.prefs:DP(),c=C[i%5],m=String(a[2]||'').split(' â€¢ '),sh=document.getElementById('sheet');if(!sh)return;var bn=a[4]||a[3];
+  var lang=p.lang;var valid=languages().some(function(x){return x[0]===lang;});if(!valid)lang='hi';SH={i:i,s:1,e:1,l:lang,v:Number(p.srv)===1?1:0,hsrc:null,play:0,pg:0};
+  var bg=bn?'linear-gradient(to top,rgba(12,12,20,.3),transparent),url('+cu(bn)+') center/cover,#0c0c14':'radial-gradient(85% 70% at 70% 0%,rgba('+c+',.5),transparent 70%),radial-gradient(60% 50% at 0% 100%,rgba(233,196,106,.2),transparent 70%),#0c0c14';
+  sh.innerHTML='<div class="sh-top" id="shtop" style="background:'+bg+'"><button class="sh-x" onclick="closeSheet()" aria-label="Close">âœ•</button></div><div class="sh-b"><div class="chips"><span class="r">â˜… '+a[0]+'</span>'+m.map(function(t){return '<span>'+esc(t)+'</span>';}).join('')+'</div><h2>'+esc(a[1])+'</h2>'+(a[7]?'<p class="ds">'+esc(a[7])+'</p>':'')+'<div class="acts"><button class="btn" onclick="play()">â–¶ Watch Now</button><button class="btn g" id="ml" onclick="toggleList(ALL[SH.i][1])"></button></div><div id="ctl"></div><div id="playback-tools" style="display:none;margin:10px 0"><small id="playback-status" style="display:block;margin-bottom:8px;overflow-wrap:anywhere" aria-live="polite"></small><button class="btn sm" onclick="paint(true)">â†» Retry / Refresh stream</button><div id="hindi-source-tools" style="margin-top:10px"></div></div><div id="np"></div><h4 id="eh" style="display:none">EPISODES</h4><div class="eps" id="eps"></div><div id="cm"></div></div>';
+  sh.classList.remove('pm');sh.scrollTop=0;sh.classList.add('on');var ov=document.getElementById('ov');if(ov)ov.classList.add('on');document.body.style.overflow='hidden';paint();warmHlsLibrary();
 }
-
-function eN() { return EPN[ALL[SH.i][1]] || 12; }
-
-function mlbtn() {
-  var b = document.getElementById('ml');
-  if (b) b.textContent = U && U.list.indexOf(ALL[SH.i][1]) > -1 ? '✓ In My List' : '+ My List';
+function play(k){if(k){SH.e=Number(k);SH.pg=Math.floor((SH.e-1)/PG);}SH.play=1;paint();}
+function eN(){var a=ALL[SH.i],meta=isHindi(SH.l)?metadataFor(a):null;if(meta&&meta.total>0)return meta.total;return EPN[a[1]]||12;}
+function mlbtn(){var b=document.getElementById('ml');if(b)b.textContent=U&&U.list.indexOf(ALL[SH.i][1])>-1?'âœ“ In My List':'+ My List';}
+function toggleList(name){if(!U){authView('in');toast('Login to use My List');return;}var i=U.list.indexOf(name);if(i>-1)U.list.splice(i,1);else U.list.push(name);save();decorate();mlbtn();}
+function changePlayerLanguage(index){var list=languages();if(!list[index])return;SH.l=list[index][0];SH.hsrc=null;paint();}
+function paint(force){
+  var a=ALL[SH.i];if(!a)return;var n=eN(),meta=isHindi(SH.l)?metadataFor(a):null,ns=meta&&meta.seasons>0?meta.seasons:(SEASONS[a[1]]||3),sh=document.getElementById('sheet');if(!sh)return;var pg=Math.min(SH.pg||0,Math.floor((n-1)/PG));document.getElementById('eh').style.display=SH.play?'':'none';var tools=document.getElementById('playback-tools');if(tools)tools.style.display=SH.play?'':'none';if(!SH.play){['ctl','eps','cm','np'].forEach(function(id){document.getElementById(id).innerHTML='';});mlbtn();return;}
+  var needs=force===true||playbackIdentity()!==playbackKey,options='',ranges='';for(var i=1;i<=ns;i++)options+='<option value="'+i+'"'+(i===SH.s?' selected':'')+'>Season '+i+'</option>';
+  if(n>PG){for(var z=0;z*PG<n;z++)ranges+='<option value="'+z+'"'+(z===pg?' selected':'')+'>Ep '+(z*PG+1)+'â€“'+Math.min(n,(z+1)*PG)+'</option>';ranges='<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">'+ranges+'</select>';}
+  document.getElementById('ctl').innerHTML='<select class="sel" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.hsrc=null;paint()" aria-label="Season">'+options+'</select><div class="seg">'+languages().map(function(x,index){return '<button class="'+(x[0]===SH.l?'on':'')+'" onclick="changePlayerLanguage('+index+')">'+esc(x[1])+'</button>';}).join('')+'</div><div class="seg">'+[0,1].map(function(v){return '<button class="'+(v===SH.v?'on':'')+'" onclick="SH.v='+v+';SH.hsrc=null;paint(true)">Server 0'+(v+1)+'</button>';}).join('')+'</div>'+ranges;
+  var html='';for(i=pg*PG+1;i<=Math.min(n,pg*PG+PG);i++)html+='<button class="'+(i===SH.e?'on':'')+'" onclick="play('+i+')">'+i+'</button>';document.getElementById('eps').innerHTML=html;
+  document.getElementById('np').innerHTML='<div class="np"><span>â–¶ S'+SH.s+' Â· Episode '+SH.e+'</span><div><button '+(SH.e<2?'disabled ':'')+'onclick="play('+(SH.e-1)+')">â€¹ Prev</button><button '+(SH.e>=n?'disabled ':'')+'onclick="play('+(SH.e+1)+')">Next â€º</button></div></div>';mlbtn();if(needs)cmt();sh.classList.add('pm');if(needs)beginPlayback(a,force===true);
 }
+function decorate(){document.querySelectorAll('.card').forEach(function(card,i){var a=ALL[i];if(!a)return;var poster=card.querySelector('.poster'),bookmark=card.querySelector('.bm');var local=hasVid(a[1]),canSearch=getAnimeId(a)!==null||!!String(a[1]||'').trim(),show=local||canSearch;if(poster){var watch=poster.querySelector('.wbtn');poster.classList.toggle('hv',show);if(show){if(!watch){watch=document.createElement('button');watch.className='wbtn';watch.type='button';poster.appendChild(watch);}watch.textContent='â–¶ Watch';watch.setAttribute('aria-label','Watch '+String(a[1]||'anime'));watch.title=local?'Watch available video':'Search available providers; availability not verified';watch.onclick=function(event){event.preventDefault();event.stopPropagation();openSheet(i);play();};}else if(watch)watch.remove();}if(bookmark){bookmark.classList.toggle('on',!!U&&U.list.indexOf(a[1])>-1);bookmark.onclick=function(event){event.preventDefault();event.stopPropagation();toggleList(a[1]);};}});}
 
-function toggleList(n) {
-  if (!U) { authView('in'); toast('Login to use My List'); return; }
-  var k = U.list.indexOf(n);
-  if (k > -1) U.list.splice(k, 1); else U.list.push(n);
-  save();
-  decorate();
-  mlbtn();
-}
+/* Existing comments */
+function ck(){return 'akC:'+ALL[SH.i][1]+':'+SH.s+':'+SH.e;}
+function ago(time){var s=(Date.now()-time)/1000;return s<60?'just now':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':Math.floor(s/86400)+'d ago';}
+function cmt(){var list=ls(ck())||[],html='<h4>COMMENTS Â· S'+SH.s+' E'+SH.e+' <span class="cnt">'+list.length+'</span></h4>';html+=U?'<div class="cbox">'+av(U,36)+'<textarea id="ct" maxlength="500" rows="2" placeholder="Write a comment..."></textarea><button class="btn sm" onclick="postC()">Post</button></div>':'<button class="lnk" onclick="authView(\'in\')">Login to join the discussion</button>';html+=list.length?list.map(function(c,i){var likes=c.l||[];return '<div class="cmt">'+av(USERS[c.e]||{},34)+'<div><b>'+esc(c.n)+'</b><small>'+ago(c.t)+'</small><p>'+esc(c.x)+'</p><button class="lk'+(U&&likes.indexOf(U.email)>-1?' on':'')+'" onclick="likeC('+i+')">â™¥ '+likes.length+'</button>'+(U&&c.e===U.email?'<button class="lk" onclick="delC('+i+')">Delete</button>':'')+'</div></div>';}).join(''):'<p class="mu" style="margin-top:10px">No comments yet. Be the first!</p>';document.getElementById('cm').innerHTML=html;}
+function postC(){var input=document.getElementById('ct');if(!input||!U)return;var text=input.value.trim();if(!text)return;var key=ck(),list=ls(key)||[];list.unshift({e:U.email,n:U.name,x:text,t:Date.now(),l:[]});ls(key,list.slice(0,100));cmt();}
+function likeC(i){if(!U){authView('in');return;}var key=ck(),list=ls(key)||[],c=list[i];if(!c)return;c.l=c.l||[];var index=c.l.indexOf(U.email);if(index>-1)c.l.splice(index,1);else c.l.push(U.email);ls(key,list);cmt();}
+function delC(i){if(!U)return;var key=ck(),list=ls(key)||[];if(!list[i]||list[i].e!==U.email)return;list.splice(i,1);ls(key,list);cmt();}
 
-// ==========================================
-// 4. MAIN PLAYER LOGIC (paint)
-// ==========================================
-async function paint() {
-  var a = ALL[SH.i];
-  if (!a) return;
-  var n = eN();
-  var ns = SEASONS[a[1]] || 3;
-  var sh = document.getElementById('sheet');
-  var pg = Math.min(SH.pg || 0, Math.floor((n - 1) / PG));
+/* Existing page events */
+document.addEventListener('click',function(event){if(!event.target.closest('.search')&&typeof sr!=='undefined'&&sr)sr.className='';});
+document.querySelectorAll('.arr button').forEach(function(button){button.onclick=function(){var row=document.getElementById(button.dataset.r);if(row)row.scrollBy({left:Number(button.dataset.d)*row.clientWidth*.9,behavior:'smooth'});};});
+var playerModalElement=document.getElementById('mw');if(playerModalElement)playerModalElement.addEventListener('click',function(event){if(event.target.id==='mw')closeM();});
+document.addEventListener('keydown',function(event){if(event.key==='Escape')closeM();});
+var existingSheet=document.getElementById('sheet');if(existingSheet)new MutationObserver(function(){if(!existingSheet.classList.contains('on'))stopPlayback();}).observe(existingSheet,{attributes:true,attributeFilter:['class']});
+window.addEventListener('pagehide',function(){stopPlayback();});
 
-  document.getElementById('eh').style.display = SH.play ? '' : 'none';
-
-  if (!SH.play) {
-    ['ctl', 'eps', 'cm', 'np'].forEach(function (id) { document.getElementById(id).innerHTML = ''; });
-    mlbtn();
-    return;
-  }
-
-  var options = '';
-  var ranges = '';
-
-  for (var i = 1; i <= ns; i++) {
-    options += '<option value="' + i + '"' + (i === SH.s ? ' selected' : '') + '>Season ' + i + '</option>';
-  }
-
-  if (n > PG) {
-    for (var z = 0; z * PG < n; z++) {
-      ranges += '<option value="' + z + '"' + (z === pg ? ' selected' : '') + '>Ep ' + (z * PG + 1) + '–' + Math.min(n, (z + 1) * PG) + '</option>';
-    }
-    ranges = '<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">' + ranges + '</select>';
-  }
-
-  document.getElementById('ctl').innerHTML = '<select class="sel" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;paint()" aria-label="Season">' + options + '</select><div class="seg">' + LANGS.map(function (x) { return '<button class="' + (x[0] === SH.l ? 'on' : '') + '" onclick="SH.l=\'' + x[0] + '\';paint()">' + x[1] + '</button>'; }).join('') + '</div><div class="seg">' + [0, 1].map(function (v) { return '<button class="' + (v === SH.v ? 'on' : '') + '" onclick="SH.v=' + v + ';paint()">Server 0' + (v + 1) + '</button>'; }).join('') + '</div>' + ranges;
-
-  var episodes = '';
-  for (i = pg * PG + 1; i <= Math.min(n, pg * PG + PG); i++) {
-    episodes += '<button class="' + (i === SH.e ? 'on' : '') + '" onclick="play(' + i + ')">' + i + '</button>';
-  }
-  document.getElementById('eps').innerHTML = episodes;
-
-  document.getElementById('np').innerHTML = '<div class="np"><span>▶ S' + SH.s + ' · Episode ' + SH.e + '</span><div><button ' + (SH.e < 2 ? 'disabled ' : '') + 'onclick="play(' + (SH.e - 1) + ')">‹ Prev</button><button ' + (SH.e >= n ? 'disabled ' : '') + 'onclick="play(' + (SH.e + 1) + ')">Next ›</button></div></div>';
-
-  mlbtn();
-  cmt();
-  sh.classList.add('pm');
-
-  var run = ++playerRun;
-  destroyPlayer();
-
-  // ==========================================
-  // 🚨 হিন্দি বাটনে ক্লিক করলে এই অংশটি কাজ করবে 🚨
-  // ==========================================
-  if (SH.l === 'hindi') {
-    showPlayerMessage('Searching Hindi library...', 'Trying ' + a[1] + ' on Hindi API');
-    var hindiUrl = await getHindiStream(a[1], SH.s, SH.e);
-    
-    if (!playerIsCurrent(run)) return;
-    
-    if (hindiUrl) {
-      try {
-        await mountStream({ type: 'iframe', url: hindiUrl }, run);
-        return;
-      } catch (err) {
-        console.warn('Hindi embed failed:', err);
-      }
-    }
-    
-    if (playerIsCurrent(run)) {
-      destroyPlayer();
-      showPlayerMessage('Hindi stream not found', 'This anime is not available in Hindi on the library.');
-    }
-    return;
-  }
-
-  // ==========================================
-  // 🚨 Sub এবং Dub-এর জন্য আগের Anivexa লজিক (কোনো পরিবর্তন নেই) 🚨
-  // ==========================================
-  var providers = providerOrder(SH.v);
-  var audio = SH.l === 'dub' ? 'dub' : 'sub';
-  var lastError = '';
-
-  for (var p = 0; p < providers.length; p++) {
-    if (!playerIsCurrent(run)) return;
-    destroyPlayer();
-    showPlayerMessage('Loading stream...', 'Trying ' + providers[p] + ' (' + (p + 1) + '/' + providers.length + ')');
-    try {
-      var streams = await fetchProviderStreams(providers[p], a[10] || a.id, SH.e, audio);
-      if (!playerIsCurrent(run)) return;
-      for (var j = 0; j < streams.length; j++) {
-        if (!playerIsCurrent(run)) return;
-        try {
-          await mountStream(streams[j], run);
-          if (playerIsCurrent(run)) return;
-        } catch (err) {
-          lastError = err.message;
-        }
-      }
-    } catch (err) {
-      lastError = err.message;
-    }
-  }
-
-  if (playerIsCurrent(run)) {
-    destroyPlayer();
-    showPlayerMessage('No playable stream found', lastError || 'Please try another server or anime.');
-  }
-}
-
-function decorate() {
-  document.querySelectorAll('.card').forEach(function (card, i) {
-    var a = ALL[i];
-    if (!a) return;
-    var poster = card.querySelector('.poster');
-    var bookmark = card.querySelector('.bm');
-    if (poster && hasVid(a[1]) && !card.querySelector('.wbtn')) {
-      poster.classList.add('hv');
-      var watch = document.createElement('button');
-      watch.className = 'wbtn';
-      watch.textContent = '▶ Watch';
-      watch.onclick = function (event) { event.stopPropagation(); openSheet(i); play(); };
-      poster.appendChild(watch);
-    }
-    if (bookmark) {
-      bookmark.classList.toggle('on', !!U && U.list.indexOf(a[1]) > -1);
-      bookmark.onclick = function (event) { event.stopPropagation(); toggleList(a[1]); };
-    }
-  });
-}
-
-document.getElementById('mw').addEventListener('click', function (e) { if (e.target.id === 'mw') closeM(); });
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeM(); });
-
-/* ---- comments ---- */
-function ck() { return 'akC:' + ALL[SH.i][1] + ':' + SH.s + ':' + SH.e; }
-function ago(t) { var s = (Date.now() - t) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; }
-function cmt() {
-  var L = ls(ck()) || [];
-  var h = '<h4>COMMENTS · S' + SH.s + ' E' + SH.e + ' <span class="cnt">' + L.length + '</span></h4>';
-  h += U ? '<div class="cbox">' + av(U, 36) + '<textarea id="ct" maxlength="500" rows="2" placeholder="Write a comment..."></textarea><button class="btn sm" onclick="postC()">Post</button></div>' : '<button class="lnk" onclick="authView(\'in\')">Login to join the discussion</button>';
-  h += L.length ? L.map(function (c, i) {
-    var l = c.l || [];
-    return '<div class="cmt">' + av(USERS[c.e] || {}, 34) + '<div><b>' + esc(c.n) + '</b><small>' + ago(c.t) + '</small><p>' + esc(c.x) + '</p><button class="lk' + (U && l.indexOf(U.email) > -1 ? ' on' : '') + '" onclick="likeC(' + i + ')">♥ ' + l.length + '</button>' + (U && c.e === U.email ? '<button class="lk" onclick="delC(' + i + ')">Delete</button>' : '') + '</div></div>';
-  }).join('') : '<p class="mu" style="margin-top:10px">No comments yet. Be the first!</p>';
-  document.getElementById('cm').innerHTML = h;
-}
-function postC() { var t = document.getElementById('ct'), x = t.value.trim(); if (!x || !U) return; var k = ck(), L = ls(k) || []; L.unshift({ e: U.email, n: U.name, x: x, t: Date.now(), l: [] }); ls(k, L.slice(0, 100)); cmt(); }
-function likeC(i) { if (!U) { authView('in'); return; } var k = ck(), L = ls(k) || [], c = L[i]; if (!c) return; c.l = c.l || []; var j = c.l.indexOf(U.email); if (j > -1) c.l.splice(j, 1); else c.l.push(U.email); ls(k, L); cmt(); }
-function delC(i) { if (!U) return; var k = ck(), L = ls(k) || []; if (!L[i] || L[i].e !== U.email) return; L.splice(i, 1); ls(k, L); cmt(); }
-
+/* INITIALIZE */
 ub();
 applyTheme();
 decorate();
