@@ -1,25 +1,15 @@
 /* =====================================================
-   COMPLETE player.js REPLACEMENT (CoorenLabs Integrated)
-
-   Requires the existing site's:
-   ALL, VIDEOS, EPN, SEASONS, LANGS, C, U, USERS,
-   DP, esc, ls, av, save, toast, authView,
-   closeSheet, closeM, ub, applyTheme.
+   COMPLETE player.js (Anivexa + CoorenLabs Render Integration)
    ===================================================== */
 
 var SH = {};
 var PG = 100;
 
 var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub
-var HINDI_API = 'https://cooren-labs-5nwkvjreq-anbu-kai-anime.vercel.app'; // CoorenLabs Hindi API
+var HINDI_API = 'https://coorenlabs-03iz.onrender.com';   // CoorenLabs Hindi API (Render)
 
 var STREAM_PROVIDERS = [
-  'anikoto',
-  'reanime',
-  'kaa',
-  'senshi',
-  'anizone',
-  'aniwaves'
+  'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves'
 ];
 
 var activeHls = null;
@@ -34,6 +24,7 @@ var hindiCache = new Map();
 var hindiPending = new Map();
 
 var HINDI_CACHE_LIMIT = 40;
+var HINDI_TIMEOUT = 45000;
 
 /* ================= DATA HELPERS ================= */
 
@@ -125,13 +116,13 @@ async function fetchWithTimeout(url, options) {
   try { return await fetch(url, settings); } finally { clearTimeout(timer); }
 }
 
-async function requestJson(url, retryServerError) {
+async function requestJson(url, retryServerError, timeout) {
   var maxAttempts = retryServerError ? 2 : 1;
   for (var attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt) await wait(1200);
     var response;
     try {
-      response = await fetchWithTimeout(url, { timeout: 18000, cache: 'no-store' });
+      response = await fetchWithTimeout(url, { timeout: timeout || 18000, cache: 'no-store' });
     } catch (error) {
       var networkError = new Error((error.name === 'AbortError' ? 'API request timed out' : 'API request failed: network or CORS') + ' · ' + url);
       networkError.url = url;
@@ -183,8 +174,8 @@ function normalizeStreams(data, base) {
       else if (embed && typeof embed === 'object') add(embed.url || embed.src, 'iframe', false, sourceLabel);
     });
 
-    // 🚨 CoorenLabs proxiedUrl যোগ করা হলো 🚨
-    var url = item.url || item.file || item.src || item.proxiedUrl;
+    // Hindi API-তে proxiedUrl সাধারণত বেশি নির্ভরযোগ্য, তাই আগে দেখা হচ্ছে
+    var url = item.proxiedUrl || item.url || item.file || item.src;
     if (url) add(url, item.type || item.format || item.mimeType, special, sourceLabel);
 
     ['streams', 'sources', 'data', 'results', 'stream'].forEach(function (key) {
@@ -215,11 +206,11 @@ function hindiApi(path, params, ttl, fresh) {
   if (!fresh && cached && cached.expires > Date.now()) return Promise.resolve(cached.data);
   if (hindiPending.has(key)) return hindiPending.get(key);
 
-  var promise = requestJson(key, true).then(function (data) {
+  var promise = requestJson(key, true, HINDI_TIMEOUT).then(function (data) {
     if (ttl) {
       hindiCache.delete(key);
       hindiCache.set(key, { expires: Date.now() + ttl, data: data });
-      while (hindiCache.size > 40) { hindiCache.delete(hindiCache.keys().next().value); }
+      while (hindiCache.size > HINDI_CACHE_LIMIT) { hindiCache.delete(hindiCache.keys().next().value); }
     }
     return data;
   });
@@ -232,7 +223,7 @@ function hindiApi(path, params, ttl, fresh) {
 function hindiRows(data) {
   if (Array.isArray(data)) return data;
   if (!data) return [];
-  if (Array.isArray(data.data)) return data.data; // CoorenLabs uses 'data'
+  if (Array.isArray(data.data)) return data.data;
   if (Array.isArray(data.results)) return data.results;
   if (data.results && Array.isArray(data.results.results)) return data.results.results;
   return [];
@@ -279,7 +270,6 @@ async function resolveHindiTitle(session) {
   var choice = hindiChoices.get(key);
   if (choice) return choice;
 
-  // 🚨 CoorenLabs সার্চ এন্ডপয়েন্ট 🚨
   var data = await hindiApi('/anime/toonstream/search/' + encodeURIComponent(session.anime[1]) + '/1', {}, 300000, false);
   if (!playerIsCurrent(session.run)) return null;
 
@@ -295,12 +285,11 @@ async function resolveHindiTitle(session) {
     return choice;
   }
 
-  showHindiSearch(session, rows, rows.length ? 'Select the correct Hindi title' : 'No exact match. Try another title.');
+  showHindiSearch(session, rows, rows.length ? 'Select the correct Hindi title' : 'No Hindi result found for this title.');
   return null;
 }
 
 async function loadHindiMetadata(choice, session) {
-  // 🚨 CoorenLabs ইনফো এন্ডপয়েন্ট 🚨
   try {
     var infoRes = await hindiApi('/anime/toonstream/info/' + choice.id, {}, 300000, false);
     var info = infoRes.data || infoRes.results || infoRes;
@@ -309,12 +298,32 @@ async function loadHindiMetadata(choice, session) {
     paint();
   } catch (err) {
     console.warn('Hindi info fetch failed:', err);
-    // ইনফো না পেলেও স্ট্রিম খোঁজার চেষ্টা করবে
   }
 }
 
+function extractHindiSources(data) {
+  var output = [];
+  var root = data && data.data ? data.data : data;
+  var sources = root && (root.sources || root.data && root.data.sources);
+
+  if (Array.isArray(sources)) {
+    sources.forEach(function (source) {
+      if (!source) return;
+      var url = safeStreamUrl(source.proxiedUrl || source.url || source.file || source.src, HINDI_API + '/');
+      if (!url) return;
+      output.push({
+        url: url,
+        type: inferStreamType(url, source.type || source.format || source.mimeType),
+        specialHls: false,
+        label: source.server || source.label || 'Hindi source'
+      });
+    });
+  }
+
+  return output;
+}
+
 /* ================= HLS LIBRARY ================= */
-// (আগের কোডের মতোই আছে)
 function loadHlsLibrary() {
   if (typeof Hls !== 'undefined') return Promise.resolve();
   if (hlsLibraryPromise) return hlsLibraryPromise;
@@ -345,7 +354,6 @@ function warmHlsLibrary() {
 }
 
 /* ================= SESSION + CLEANUP ================= */
-// (আগের কোডের মতোই আছে)
 function playerIsCurrent(run) {
   var sheet = document.getElementById('sheet');
   return !!(run === playerRun && activePlayback && !activePlayback.cancelled && sheet && sheet.classList.contains('on') && SH.play);
@@ -384,7 +392,6 @@ function stopPlayback() {
 }
 
 /* ================= PLAYER UI ================= */
-// (আগের কোডের মতোই আছে)
 function preparePlayerTop() {
   var top = document.getElementById('shtop');
   if (top) {
@@ -475,7 +482,6 @@ function drawSources(streams, provider, session, selected) {
 }
 
 /* ================= STABLE MEDIA PLAYER ================= */
-// (আগের কোডের মতোই আছে)
 async function mountStream(stream, session, provider) {
   var run = session.run;
   if (!playerIsCurrent(run)) throw new Error('Playback cancelled');
@@ -754,13 +760,16 @@ async function startPlayback(session) {
       if (!playerIsCurrent(run)) return;
 
       showPlayerMessage('Loading Hindi sources...', choice.title + ' · S' + state.s + ' E' + state.e);
-      
-      // 🚨 CoorenLabs স্ট্রিম এন্ডপয়েন্ট 🚨
+
       var streamUrl = HINDI_API + '/anime/toonstream/episode/sources/' + encodeURIComponent(choice.id) + '?season=' + state.s + '&episode=' + state.e;
-      var data = await requestJson(streamUrl, true);
+      var data = await requestJson(streamUrl, true, HINDI_TIMEOUT);
       if (!playerIsCurrent(run)) return;
 
       var hindiStreams = normalizeStreams(data.data || data, HINDI_API + '/');
+
+      // CoorenLabs response format: data.sources[0].proxiedUrl / url
+      if (!hindiStreams.length) hindiStreams = extractHindiSources(data);
+
       if (await trySources(hindiStreams, 'Hindi API', session)) return;
 
       throw new Error(session.lastError || 'Hindi API returned no playable sources');
@@ -768,7 +777,7 @@ async function startPlayback(session) {
       if (!playerIsCurrent(run)) return;
       destroyPlayer();
       showPlayerMessage('Hindi source unavailable', error.message, true);
-      updatePlaybackStatus(error.message + ' · HTTP 500 requires investigation of the API backend.');
+      updatePlaybackStatus(error.message);
       console.error('Hindi API:', error);
     }
     return;
