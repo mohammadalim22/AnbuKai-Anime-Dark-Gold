@@ -1,11 +1,11 @@
 /* =====================================================
-   COMPLETE player.js (Anivexa + CoorenLabs Render Integration)
+   COMPLETE player.js (Anivexa Sub/Dub + CoorenLabs Hindi)
    ===================================================== */
 
 var SH = {};
 var PG = 100;
 
-var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub
+var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub (Anivexa)
 var HINDI_API = 'https://coorenlabs-03iz.onrender.com';   // CoorenLabs Hindi API (Render)
 
 var STREAM_PROVIDERS = [
@@ -174,7 +174,6 @@ function normalizeStreams(data, base) {
       else if (embed && typeof embed === 'object') add(embed.url || embed.src, 'iframe', false, sourceLabel);
     });
 
-    // Hindi API-তে proxiedUrl সাধারণত বেশি নির্ভরযোগ্য, তাই আগে দেখা হচ্ছে
     var url = item.proxiedUrl || item.url || item.file || item.src;
     if (url) add(url, item.type || item.format || item.mimeType, special, sourceLabel);
 
@@ -196,7 +195,7 @@ async function fetchProviderStreams(provider, anilistId, episode, audio) {
   return streams;
 }
 
-/* ================= HINDI API ================= */
+/* ================= HINDI API (CoorenLabs) ================= */
 
 function hindiApi(path, params, ttl, fresh) {
   var url = new URL(HINDI_API + path);
@@ -319,7 +318,6 @@ function extractHindiSources(data) {
       });
     });
   }
-
   return output;
 }
 
@@ -749,6 +747,7 @@ async function startPlayback(session) {
 
   if (!playerIsCurrent(run)) return;
 
+  // HINDI (CoorenLabs API) LOGIC
   if (isHindi(state.l)) {
     try {
       showPlayerMessage('Finding Hindi title...', String(anime[1]));
@@ -767,7 +766,6 @@ async function startPlayback(session) {
 
       var hindiStreams = normalizeStreams(data.data || data, HINDI_API + '/');
 
-      // CoorenLabs response format: data.sources[0].proxiedUrl / url
       if (!hindiStreams.length) hindiStreams = extractHindiSources(data);
 
       if (await trySources(hindiStreams, 'Hindi API', session)) return;
@@ -783,6 +781,7 @@ async function startPlayback(session) {
     return;
   }
 
+  // SUB & DUB (Anivexa API) LOGIC
   var id = getAnimeId(anime);
   if (!id) {
     showPlayerMessage('Video not found', 'No AniList ID. Hindi mode can search by title.', true);
