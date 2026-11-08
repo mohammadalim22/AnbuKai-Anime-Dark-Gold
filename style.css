@@ -398,3 +398,45 @@ html header .logo,html .dock a{text-shadow:none}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   html header,html .dock,#sheet,#mc,#sr{background:var(--s1)}
 }
+
+/* =====================================================================
+   V2 TWEAKS: colourful glass cards, boxed video player, pink ANIME tag
+   ===================================================================== */
+
+/* logo: small "ANIME" tag in pink */
+.wm small{color:var(--rose);-webkit-text-fill-color:var(--rose)}
+
+/* anime cards: each card gets its own pastel glass rim + coloured glow */
+.card .frame{
+  padding:2px;
+  border-radius:17px;
+  background:linear-gradient(150deg,var(--c1,#fff3b8),var(--c2,#ffd23f));
+  box-shadow:0 14px 26px -12px var(--cs,rgba(230,170,0,.55)),inset 0 1px 0 rgba(255,255,255,.7);
+}
+.card .poster{border-radius:15px}
+.row .card:nth-child(6n+1) .frame{--c1:#ff9a8b;--c2:#ffd0a8;--cs:rgba(255,120,100,.55)}
+.row .card:nth-child(6n+2) .frame{--c1:#a18cd1;--c2:#fbc2eb;--cs:rgba(161,140,209,.55)}
+.row .card:nth-child(6n+3) .frame{--c1:#84fab0;--c2:#8fd3f4;--cs:rgba(70,200,160,.5)}
+.row .card:nth-child(6n+4) .frame{--c1:#f6d365;--c2:#fda085;--cs:rgba(246,180,70,.55)}
+.row .card:nth-child(6n+5) .frame{--c1:#89f7fe;--c2:#66a6ff;--cs:rgba(90,160,255,.5)}
+.row .card:nth-child(6n+6) .frame{--c1:#fccb90;--c2:#d57eeb;--cs:rgba(213,126,235,.45)}
+/* lighter bottom shade so posters look brighter */
+.poster::after{background:linear-gradient(to top,rgba(0,0,0,.40),transparent 55%)}
+
+/* video player: a rounded box with margins instead of edge-to-edge */
+#sheet .sh-top.pl,#mc .sh-top.pl{
+  margin:8px 10px 0;
+  border-radius:18px;
+  border:1px solid var(--g-bd);
+  box-shadow:0 16px 32px -14px rgba(40,30,0,.55),inset 0 1px 0 rgba(255,255,255,.25);
+}
+
+/* player mode: sheet fills the screen so the video box sits at the very top */
+#sheet.pm{
+  min-height:100vh;
+  min-height:100dvh;
+  max-height:100vh;
+  max-height:100dvh;
+  border-radius:0;
+  border-top:0;
+}
