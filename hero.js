@@ -8,7 +8,7 @@ var hi=0,ht;
 function showHero(i){
   hi=(i+HERO.length)%HERO.length;
   var h=HERO[hi],el=document.getElementById('hero');
-  if(h.img){el.style.backgroundImage='linear-gradient(90deg,rgba(6,6,10,.94),rgba(6,6,10,.3)),url('+h.img+')';el.style.backgroundSize='cover';el.style.backgroundPosition='center'}else{el.style.backgroundImage='';el.style.backgroundSize=''}
+  if(h.img){el.style.backgroundImage='linear-gradient(90deg,rgba(253,248,228,.95),rgba(253,248,228,.35)),url('+h.img+')';el.style.backgroundSize='cover';el.style.backgroundPosition='center'}else{el.style.backgroundImage='';el.style.backgroundSize=''}
   el.innerHTML='<span class="eyebrow">#'+(hi+1)+' SPOTLIGHT</span><h1>'+h.title+' <span class="gold">'+h.accent+'</span></h1><div class="chips"><span class="r">★ '+h.rating+'</span>'+h.tags.map(function(t){return '<span>'+t+'</span>'}).join('')+'</div><p>'+h.desc+'</p><a class="btn" href="'+h.link+'">▶ Watch Now</a><button class="btn g">+ My List</button><div class="dots">'+HERO.map(function(_,k){return '<i class="'+(k===hi?'on':'')+'" onclick="showHero('+k+');autoHero()"></i>'}).join('')+'</div>';
 }
 function autoHero(){clearInterval(ht)}
