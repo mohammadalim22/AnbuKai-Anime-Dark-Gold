@@ -103,6 +103,148 @@ function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
+
+/* ================= SEASON CHAIN =================
+   AniList keeps every season as its own entry (own ID). The Sub/Dub API
+   needs that exact ID, so we walk PREQUEL / SEQUEL links to build
+   Season 1..N and use the matching ID for the season the user selected. */
+var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
+var SEASON_FIELDS = 'id type format episodes status seasonYear startDate{year} title{romaji english} nextAiringEpisode{episode}';
+var SEASON_QUERY = 'query($id:Int){Media(id:$id,type:ANIME){' + SEASON_FIELDS + ' relations{edges{relationType(version:2) node{' + SEASON_FIELDS + '}}}}}';
+var seasonChainCache = new Map();
+var seasonNodeCache = new Map();
+var chainToken = 0;
+
+try {
+  var savedChains = JSON.parse(sessionStorage.getItem('akSeasons1') || '{}');
+  Object.keys(savedChains).forEach(function (key) {
+    if (Array.isArray(savedChains[key])) seasonChainCache.set(Number(key), savedChains[key]);
+  });
+} catch (error) {}
+
+function saveSeasonChains() {
+  try {
+    if (seasonChainCache.size > 150) return;
+    var out = {};
+    seasonChainCache.forEach(function (chain, key) { out[key] = chain; });
+    sessionStorage.setItem('akSeasons1', JSON.stringify(out));
+  } catch (error) {}
+}
+
+function fetchSeasonNode(id) {
+  if (seasonNodeCache.has(id)) return seasonNodeCache.get(id);
+  var promise = fetchWithTimeout('https://graphql.anilist.co', {
+    method: 'POST',
+    timeout: 8000,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query: SEASON_QUERY, variables: { id: id } })
+  }).then(function (response) {
+    if (!response.ok) throw new Error('AniList HTTP ' + response.status);
+    return response.json();
+  }).then(function (json) {
+    if (!json || !json.data || !json.data.Media) throw new Error('AniList: no data');
+    return json.data.Media;
+  });
+  seasonNodeCache.set(id, promise);
+  promise.catch(function () { seasonNodeCache.delete(id); });
+  return promise;
+}
+
+function seasonYearOf(node) {
+  return node.seasonYear || (node.startDate && node.startDate.year) || 9999;
+}
+
+function seasonSummary(node) {
+  var episodes = node.episodes || (node.nextAiringEpisode ? node.nextAiringEpisode.episode - 1 : 0) || 0;
+  return {
+    id: node.id,
+    title: (node.title && (node.title.english || node.title.romaji)) || '',
+    episodes: episodes,
+    year: node.seasonYear || (node.startDate && node.startDate.year) || 0
+  };
+}
+
+function seasonRelations(node, type, seen, latestFirst) {
+  var edges = (node && node.relations && node.relations.edges) || [];
+  return edges.filter(function (edge) {
+    var n = edge && edge.node;
+    return edge.relationType === type && n && n.type === 'ANIME' && SEASON_FORMATS.test(n.format || '') && !seen.has(n.id);
+  }).map(function (edge) { return edge.node; }).sort(function (a, b) {
+    var fa = a.format === 'TV' ? 0 : 1;
+    var fb = b.format === 'TV' ? 0 : 1;
+    if (fa !== fb) return fa - fb;
+    return latestFirst ? seasonYearOf(b) - seasonYearOf(a) : seasonYearOf(a) - seasonYearOf(b);
+  });
+}
+
+async function buildSeasonChain(baseId, getNode) {
+  var base = await getNode(baseId);
+  if (!base || !SEASON_FORMATS.test(base.format || '')) return { chain: [seasonSummary(base)], complete: true };
+
+  var seen = new Set([base.id]);
+  var before = [];
+  var after = [];
+  var complete = true;
+  var cur = base;
+  var hop;
+
+  for (hop = 0; hop < 12; hop++) {
+    var prev = seasonRelations(cur, 'PREQUEL', seen, true)[0];
+    if (!prev) break;
+    seen.add(prev.id);
+    before.unshift(seasonSummary(prev));
+    try { cur = await getNode(prev.id); } catch (error) { complete = false; break; }
+  }
+
+  cur = base;
+  for (hop = 0; hop < 12; hop++) {
+    var next = seasonRelations(cur, 'SEQUEL', seen, false)[0];
+    if (!next) break;
+    seen.add(next.id);
+    after.push(seasonSummary(next));
+    try { cur = await getNode(next.id); } catch (error) { complete = false; break; }
+  }
+
+  return { chain: before.concat([seasonSummary(base)], after), complete: complete };
+}
+
+async function loadSeasonChain(baseId) {
+  var cached = seasonChainCache.get(baseId);
+  if (cached) return cached;
+  var result = await buildSeasonChain(baseId, fetchSeasonNode);
+  if (result.complete) {
+    result.chain.forEach(function (item) { seasonChainCache.set(item.id, result.chain); });
+    saveSeasonChains();
+  }
+  return result.chain;
+}
+
+function applySeasonChain(token, chain, baseId) {
+  if (!SH || SH.chainTok !== token) return;
+  var index = -1;
+  if (Array.isArray(chain)) {
+    for (var i = 0; i < chain.length; i++) { if (chain[i].id === baseId) { index = i; break; } }
+  }
+  if (index < 0) { chain = null; index = 0; }
+  SH.chain = chain;
+  SH.chainReady = true;
+  SH.baseS = index + 1;
+  if (!isHindi(SH.l) && !SH.sTouched) SH.s = index + 1;
+  if (SH.play && !isHindi(SH.l)) paint(true); else paint();
+}
+
+function startSeasonChain(baseId) {
+  var token = ++chainToken;
+  SH.chainTok = token;
+  var cached = seasonChainCache.get(baseId);
+  if (cached) { applySeasonChain(token, cached, baseId); return; }
+  var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 9000); });
+  Promise.race([loadSeasonChain(baseId), timeout]).then(
+    function (chain) { applySeasonChain(token, chain, baseId); },
+    function () { applySeasonChain(token, null, baseId); }
+  );
+}
+
 /* ================= NETWORK ================= */
 
 async function fetchWithTimeout(url, options) {
@@ -782,7 +924,17 @@ async function startPlayback(session) {
   }
 
   // SUB & DUB (Anivexa API) LOGIC
+  // wait until the season list is known; applySeasonChain() restarts playback itself
+  if (!SH.chainReady) {
+    showPlayerMessage('Finding seasons...', String(anime[1]));
+    return;
+  }
+
   var id = getAnimeId(anime);
+  if (SH.chain && !hasVid(anime[1])) {
+    var seasonEntry = SH.chain[state.s - 1];
+    if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
+  }
   if (!id) {
     showPlayerMessage('Video not found', 'No AniList ID. Hindi mode can search by title.', true);
     return;
@@ -855,7 +1007,7 @@ function openSheet(index) {
   var language = preferences.lang;
   if (!playerLanguages().some(function (item) { return item[0] === language; })) language = 'hi';
 
-  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, provider: 'auto', src: null, play: 0, pg: 0 };
+  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, provider: 'auto', src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
 
   var banner = anime[4] || anime[3];
   var background = banner ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(banner) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + color + ',.5),transparent 70%),#0c0c14';
@@ -869,6 +1021,9 @@ function openSheet(index) {
   var overlay = document.getElementById('ov');
   if (overlay) overlay.classList.add('on');
   document.body.style.overflow = 'hidden';
+
+  var baseAnimeId = getAnimeId(anime);
+  if (!baseAnimeId || hasVid(anime[1])) { SH.chainReady = true; } else { startSeasonChain(baseAnimeId); }
 
   paint();
   warmHlsLibrary();
@@ -889,6 +1044,11 @@ function eN() {
   var anime = ALL[SH.i];
   var meta = isHindi(SH.l) ? currentHindiMetadata(anime) : null;
   if (meta && meta.total > 0) return meta.total;
+  if (!isHindi(SH.l) && SH.chain && !hasVid(anime[1])) {
+    var entry = SH.chain[SH.s - 1];
+    if (entry && entry.episodes > 0) return entry.episodes;
+    if (entry && entry.id !== getAnimeId(anime)) return 12;
+  }
   return EPN[anime[1]] || 12;
 }
 
@@ -907,7 +1067,13 @@ function toggleList(name) {
 function changePlayerLanguage(index) {
   var item = playerLanguages()[index];
   if (!item) return;
+  var wasHindi = isHindi(SH.l);
   SH.l = item[0];
+  if (wasHindi !== isHindi(SH.l)) {
+    SH.s = isHindi(SH.l) ? 1 : (SH.baseS || 1);
+    SH.e = 1;
+    SH.pg = 0;
+  }
   SH.provider = 'auto';
   SH.src = null;
   paint();
@@ -929,7 +1095,11 @@ function paint(force) {
 
   var count = eN();
   var meta = isHindi(SH.l) ? currentHindiMetadata(anime) : null;
-  var seasons = meta && meta.seasons > 0 ? meta.seasons : SEASONS[anime[1]] || 3;
+  var seasons;
+  if (isHindi(SH.l)) seasons = meta && meta.seasons > 0 ? meta.seasons : SEASONS[anime[1]] || 3;
+  else if (hasVid(anime[1])) seasons = SEASONS[anime[1]] || 3;
+  else seasons = SH.chain ? SH.chain.length : 1;
+  if (SH.s > seasons) { SH.s = Math.max(1, seasons); count = eN(); }
   var page = Math.min(SH.pg || 0, Math.floor((count - 1) / PG));
 
   document.getElementById('eh').style.display = SH.play ? '' : 'none';
@@ -961,7 +1131,7 @@ function paint(force) {
     providerControl = '<label style="display:block;margin:8px 0">Provider <select class="sel" aria-label="Provider" onchange="changePlayerProvider(this.value)">' + providerOptions + '</select></label>';
   }
 
-  document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(item[1]) + '</button>'; }).join('') + '</div>' + providerControl + rangeOptions;
+  document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.sTouched=1;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(item[1]) + '</button>'; }).join('') + '</div>' + providerControl + rangeOptions;
 
   var episodeButtons = '';
   for (var episode = page * PG + 1; episode <= Math.min(count, page * PG + PG); episode++) { episodeButtons += '<button class="' + (episode === SH.e ? 'on' : '') + '" onclick="play(' + episode + ')">' + episode + '</button>'; }
