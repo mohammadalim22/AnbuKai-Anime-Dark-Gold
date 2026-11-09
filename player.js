@@ -225,7 +225,13 @@ function applySeasonChain(token, chain, baseId) {
   if (Array.isArray(chain)) {
     for (var i = 0; i < chain.length; i++) { if (chain[i].id === baseId) { index = i; break; } }
   }
-  if (index < 0) { chain = null; index = 0; }
+  if (index < 0) {
+    var current = typeof ALL !== 'undefined' ? ALL[SH.i] : null;
+    var name = current ? String(current[1]) : '';
+    var match = name.match(/(?:season|part|cour)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+season/i);
+    chain = [{ id: baseId, title: name, episodes: 0, year: 0, num: match ? Number(match[1] || match[2]) : 0 }];
+    index = 0;
+  }
   SH.chain = chain;
   SH.chainReady = true;
   SH.baseS = index + 1;
@@ -1114,7 +1120,17 @@ function paint(force) {
 
   var needsPlayback = force === true || stateKey() !== playbackKey;
   var seasonOptions = '';
-  for (var s = 1; s <= seasons; s++) { seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>Season ' + s + '</option>'; }
+  var chainActive = !isHindi(SH.l) && !hasVid(anime[1]) && SH.chain;
+  for (var s = 1; s <= seasons; s++) {
+    var seasonEntry = chainActive ? SH.chain[s - 1] : null;
+    var seasonLabel = (seasonEntry && seasonEntry.num) || s;
+    seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>Season ' + seasonLabel + '</option>';
+  }
+  var seasonInfo = '';
+  if (chainActive && SH.chain[SH.s - 1]) {
+    var playing = SH.chain[SH.s - 1];
+    seasonInfo = '<small class="mu" style="display:block;width:100%;margin:2px 0 6px">Playing: ' + esc(playing.title || anime[1]) + ' · AniList #' + playing.id + '</small>';
+  }
 
   var rangeOptions = '';
   if (count > PG) {
@@ -1131,7 +1147,7 @@ function paint(force) {
     providerControl = '<label style="display:block;margin:8px 0">Provider <select class="sel" aria-label="Provider" onchange="changePlayerProvider(this.value)">' + providerOptions + '</select></label>';
   }
 
-  document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.sTouched=1;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(item[1]) + '</button>'; }).join('') + '</div>' + providerControl + rangeOptions;
+  document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.sTouched=1;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(item[1]) + '</button>'; }).join('') + '</div>' + providerControl + seasonInfo + rangeOptions;
 
   var episodeButtons = '';
   for (var episode = page * PG + 1; episode <= Math.min(count, page * PG + PG); episode++) { episodeButtons += '<button class="' + (episode === SH.e ? 'on' : '') + '" onclick="play(' + episode + ')">' + episode + '</button>'; }
