@@ -501,3 +501,52 @@ html header{transform:translateZ(0)}
   .card:active .frame{transform:none}
   #toast{-webkit-backdrop-filter:none;backdrop-filter:none}
 }
+
+/* =====================================================================
+   V4: hero = bigger light liquid-glass card (hero CSS lives in anilist.js,
+   so these rules override it from here). Dark theme keeps the old look.
+   ===================================================================== */
+:root:not([data-theme="dark"]) .akh{
+  background:linear-gradient(135deg,rgba(255,255,255,.80),rgba(255,255,255,.46));
+  color:var(--text);
+  border:1px solid var(--g-bd);
+  box-shadow:inset 0 1px 0 var(--g-hi),inset 0 -1px 0 var(--g-lo),var(--g-shadow);
+}
+:root:not([data-theme="dark"]) .akh-bg{opacity:.55}
+:root:not([data-theme="dark"]) .akh-shade{
+  background:linear-gradient(90deg,rgba(255,252,238,.95),rgba(255,252,238,.80) 55%,rgba(255,252,238,.50));
+}
+:root:not([data-theme="dark"]) .akh-sp{color:var(--ink)}
+:root:not([data-theme="dark"]) .akh-p{border-color:var(--gline);box-shadow:0 10px 22px -8px rgba(110,85,0,.45)}
+:root:not([data-theme="dark"]) .akh-m span{
+  background:linear-gradient(135deg,var(--g-a),var(--g-b));
+  border:1px solid var(--g-bd);
+  box-shadow:inset 0 1px 0 var(--g-hi);
+  color:var(--text);
+}
+:root:not([data-theme="dark"]) .akh-m .r{color:var(--ink)}
+:root:not([data-theme="dark"]) .akh-b .btn.g{
+  color:var(--text);
+  background:linear-gradient(135deg,var(--g-a),var(--g-b));
+  border:1px solid var(--g-bd);
+  box-shadow:inset 0 1px 0 var(--g-hi);
+}
+:root:not([data-theme="dark"]) .akh-d span{background:rgba(120,95,0,.22)}
+:root:not([data-theme="dark"]) .akh-d span.on{background:var(--tg2)}
+
+/* bigger hero, like the preview */
+.akh{border-radius:22px}
+.akh-c{gap:16px;padding:20px 18px 4px}
+.akh-p{width:104px;border-radius:14px}
+.akh-sp{font-size:.64rem;margin-bottom:7px}
+.akh-t{font-size:1.3rem;line-height:1.18;margin-bottom:10px}
+.akh-m{gap:6px;margin-bottom:14px}
+.akh-m span{font-size:.72rem;padding:3px 10px;border-radius:9px}
+.akh-b{gap:8px}
+.akh-b .btn{padding:11px 18px;font-size:.8rem}
+.akh-d{padding:10px 18px 16px}
+@media(min-width:700px){
+  .akh-p{width:150px}
+  .akh-t{font-size:1.9rem}
+  .akh-c{padding:28px 28px 6px}
+}
