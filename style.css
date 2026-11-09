@@ -440,3 +440,64 @@ html header .logo,html .dock a{text-shadow:none}
   border-radius:0;
   border-top:0;
 }
+
+/* =====================================================================
+   V3: no peeking sheet, no dock bleed-through, smoother scrolling
+   ===================================================================== */
+
+/* 1) closed sheet must be fully hidden (was peeking at the bottom of Home) */
+#sheet{
+  visibility:hidden;
+  pointer-events:none;
+  transform:translate(-50%,120%);
+  transition:transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s linear .4s;
+}
+#sheet.on{
+  visibility:visible;
+  pointer-events:auto;
+  transform:translate(-50%,0);
+  transition:transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s;
+}
+
+/* 2) sheet / modal almost solid, so nothing behind shows through the text */
+#sheet,#mc{
+  background:linear-gradient(160deg,rgba(255,253,243,.985),rgba(255,247,222,.975));
+}
+:root[data-theme="dark"] #sheet,
+:root[data-theme="dark"] #mc{
+  background:linear-gradient(160deg,rgba(30,30,44,.985),rgba(14,14,22,.975));
+}
+/* hide the bottom dock while a sheet or modal is open */
+body:has(#sheet.on) .dock,
+body:has(#mw.on) .dock{
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+}
+.dock{transition:opacity .2s}
+
+/* 3) smoother scrolling on phones */
+html{-webkit-text-size-adjust:100%}
+.card{contain:layout style}
+.row{will-change:scroll-position}
+html header{transform:translateZ(0)}
+@media (pointer:coarse){
+  /* lighter blur = much less GPU work while scrolling */
+  html header,
+  html .dock{
+    -webkit-backdrop-filter:blur(10px);
+    backdrop-filter:blur(10px);
+  }
+  #sheet,#mc{
+    -webkit-backdrop-filter:none;
+    backdrop-filter:none;
+  }
+  html #ov,html #mw{
+    -webkit-backdrop-filter:none;
+    backdrop-filter:none;
+  }
+  /* endless shine animation on every button keeps repainting: stop it */
+  .btn:not(.g)::after{animation:none;display:none}
+  .card:active .frame{transform:none}
+  #toast{-webkit-backdrop-filter:none;backdrop-filter:none}
+}
