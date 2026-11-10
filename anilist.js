@@ -4,13 +4,36 @@ var FIELDS='id title{romaji english}averageScore seasonYear startDate{year}statu
 var FR='fragment F on Media{'+FIELDS+'}';
 var HQ='query{t:Page(perPage:20){media(type:ANIME,sort:TRENDING_DESC,isAdult:false){...F}}p:Page(perPage:20){media(type:ANIME,sort:POPULARITY_DESC,isAdult:false){...F}}r:Page(perPage:20){media(type:ANIME,sort:SCORE_DESC,isAdult:false){...F}}}'+FR;
 function bq(o){
-  var a='type:ANIME,isAdult:false,sort:'+(o.q?'SEARCH_MATCH':'POPULARITY_DESC');
-  if(o.f)a+=',format_in:['+o.f.join(',')+']';
+  var a='type:ANIME,isAdult:false,sort:POPULARITY_DESC';
+  if(o.f)a+=',format_in:['+o.f.join(',')+']';else if(o.q)a+=',format_in:[TV]';
   if(o.g)a+=',genre:"'+String(o.g).replace(/["\\]/g,'')+'"';
   if(o.q)a+=',search:$q';
   return 'query($p:Int'+(o.q?',$q:String':'')+'){Page(page:$p,perPage:30){pageInfo{hasNextPage}media('+a+'){...F}}}'+FR;
 }
-var SQ='query($s:String){Page(perPage:8){media(type:ANIME,search:$s,sort:SEARCH_MATCH,isAdult:false){...F}}}'+FR;
+var FRS='fragment F on Media{'+FIELDS+' popularity synonyms}';
+var SQ='query($s:String){Page(perPage:15){media(type:ANIME,search:$s,sort:POPULARITY_DESC,format_in:[TV],isAdult:false){...F}}}'+FRS;
+function rankSearch(list,q){
+  q=String(q).toLowerCase();
+  function names(m){var o=[];if(m.title){if(m.title.english)o.push(m.title.english);if(m.title.romaji)o.push(m.title.romaji)}(m.synonyms||[]).forEach(function(s){o.push(s)});return o.map(function(s){return String(s).toLowerCase()})}
+  function score(m){var best=3;names(m).forEach(function(s){if(s.indexOf(q)===0)best=0;else if((' '+s).indexOf(' '+q)>-1)best=Math.min(best,1);else if(s.indexOf(q)>-1)best=Math.min(best,2)});return best}
+  var r=list.map(function(m){return {m:m,s:score(m)}}).sort(function(a,b){return a.s-b.s||(b.m.popularity||0)-(a.m.popularity||0)});
+  var g=r.filter(function(x){return x.s<3});
+  return (g.length>=3?g:r).map(function(x){return x.m});
+}
+/* instant suggestions from anime we already know (home lists, earlier searches); TV anime only, never movies */
+function localMatches(v){
+  var q=v.toLowerCase(),out=[],seen={};
+  Object.keys(KN).forEach(function(k){
+    var a=KN[k];if(!a||!a[1]||seen[a[1]]||a[8]!=='TV')return;
+    var t=String(a[1]).toLowerCase(),s=t.indexOf(q)===0?0:(' '+t).indexOf(' '+q)>-1?1:9;
+    if(s<9){seen[a[1]]=1;out.push([s,a])}
+  });
+  out.sort(function(x,y){return x[0]-y[0]||(parseFloat(y[1][0])||0)-(parseFloat(x[1][0])||0)});
+  return out.slice(0,6).map(function(x){return x[1]});
+}
+function srHtml(list){
+  return list.map(function(a,i){return '<div class="sri" onclick="akPick('+i+')"><b>'+esc(a[1])+'</b><span>\u2605 '+a[0]+' \u00b7 '+esc(a[2])+'</span></div>'}).join('');
+}
 var ST={RELEASING:'ONGOING',FINISHED:'COMPLETED',NOT_YET_RELEASED:'UPCOMING',CANCELLED:'CANCELLED',HIATUS:'HIATUS'};
 var KN=ls('akK')||{},HOME=null,TOK=0,VIEW='home',RES=[],ST_T=0,akExtra=-1;
 
@@ -40,7 +63,21 @@ sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
 document.head.appendChild(sty);
 
 window.akBlockUntil=0;
-window.akImgRetry=function(i){var n=+i.dataset.r||0;if(n<3){i.dataset.r=n+1;setTimeout(function(){var s=i.getAttribute('src');i.removeAttribute('src');i.src=s},1500*(n+1))}};
+var AK_PROXY=true; /* false = always load images straight from AniList */
+window.akPx=function(u,w){return u&&AK_PROXY?'https://wsrv.nl/?url='+encodeURIComponent(u)+'&w='+(w||260)+'&output=webp&q=80':u};
+window.akImgRetry=function(i){
+  var o=i.getAttribute('data-o');
+  if(o&&!i.getAttribute('data-f')){i.setAttribute('data-f','1');i.src=o;return}
+  var n=+i.getAttribute('data-r')||0;
+  if(n<3){i.setAttribute('data-r',n+1);setTimeout(function(){var s=i.getAttribute('src');i.removeAttribute('src');i.src=s},1500*(n+1))}
+};
+function akBg(el,u){
+  if(!el||!u)return;
+  var im=new Image();
+  im.onload=function(){el.style.backgroundImage='url("'+im.src+'")'};
+  im.onerror=function(){im.onerror=null;im.src=u};
+  im.src=akPx(u,720);
+}
 function gql(q,v){
   if(Date.now()<window.akBlockUntil)return Promise.reject(new Error('AniList is busy, retrying soon'));
   var ctl=window.AbortController?new AbortController():null,tm=ctl?setTimeout(function(){ctl.abort()},15000):0;
@@ -73,7 +110,7 @@ function saveKN(){
 function resetAll(){ALL.length=0;akExtra=-1}
 function cardH(a,i){
   var c=C[i%5],x=55+((i*19)%40);
-  return '<div class="card" onclick="openSheet('+i+')"><div class="frame"><div class="poster" style="background:radial-gradient(85% 60% at '+x+'% 0%,rgba('+c+',.4),transparent 68%),#0c0c14">'+(a[3]?'<img class="pi" loading="lazy" alt="" onerror="akImgRetry(this)" src="'+esc(a[3])+'">':'')+'<span class="rate">'+a[0]+'</span>'+(a[2].indexOf('ONGOING')>-1?'<span class="nw">NEW</span>':'')+'<button class="bm" aria-label="Bookmark"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg></button><span class="l">'+esc(a[1].charAt(0))+'</span></div></div><h3>'+esc(a[1])+'</h3><small>'+esc(a[2])+'</small></div>';
+  return '<div class="card" onclick="openSheet('+i+')"><div class="frame"><div class="poster" style="background:radial-gradient(85% 60% at '+x+'% 0%,rgba('+c+',.4),transparent 68%),#0c0c14">'+(a[3]?'<img class="pi" loading="'+(i%20<6?'eager':'lazy')+'" decoding="async" alt="" onload="this.classList.add(\'ld\')" onerror="akImgRetry(this)" data-o="'+esc(a[3])+'" src="'+esc(akPx(a[3],260))+'">':'')+'<span class="rate">'+a[0]+'</span>'+(a[2].indexOf('ONGOING')>-1?'<span class="nw">NEW</span>':'')+'<button class="bm" aria-label="Bookmark"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg></button><span class="l">'+esc(a[1].charAt(0))+'</span></div></div><h3>'+esc(a[1])+'</h3><small>'+esc(a[2])+'</small></div>';
 }
 function arrows(){
   document.querySelectorAll('.arr button').forEach(function(b){
@@ -109,6 +146,13 @@ var HL=0;
 function okSets(c){
   try{return !!(c&&c.d&&c.d.length===3&&c.d.every(function(s){return s[2]&&s[2].length>5&&s[2].every(function(a){return a&&a[10]})}))}catch(e){return false}
 }
+function skelHome(){
+  var app=document.getElementById('app');
+  if(!app||app.innerHTML.trim()||HOME)return;
+  var card='<div class="card sk"><div class="frame"><div class="poster"></div></div><div class="sk-l" style="width:80%;margin:10px 1px 4px"></div><div class="sk-l" style="width:50%"></div></div>',h='';
+  ['TRENDING','TOP 10','FAN FAVORITES'].forEach(function(x){h+='<section><div class="head"><div><small>'+x+'</small><div class="sk-l" style="width:140px;height:22px;margin-top:6px"></div></div></div><div class="row">'+card+card+card+card+card+'</div></section>'});
+  app.innerHTML=h;
+}
 function paintHome(sets){
   sets.forEach(function(s){s[2].forEach(function(a){EPN[a[1]]=a[5];KN[a[1]]=a})});
   HOME=sets;initHero(sets);if(VIEW==='home')buildHome(sets);
@@ -119,6 +163,7 @@ function loadHome(){
   var fresh=!!c&&Date.now()-c.t<18e5;
   if(c&&!HOME)paintHome(c.d);
   if(fresh)return;
+  if(!c&&!HOME)skelHome();
   gql(HQ).then(function(d){
     var sets=[['TRENDING','Trending Now',d.t.media.map(cvt)],['TOP 10','Top Rated',d.r.media.map(cvt)],['FAN FAVORITES','Popular',d.p.media.map(cvt)]];
     try{localStorage.setItem('akAL3',JSON.stringify({t:Date.now(),d:sets}))}catch(e){}
@@ -126,7 +171,7 @@ function loadHome(){
   }).catch(function(){
     if(HOME)return;
     var app=document.getElementById('app');
-    if(VIEW==='home'&&app&&!app.innerHTML.trim())app.innerHTML='<p class="mu" style="text-align:center;padding:40px 16px">Loading anime... AniList is slow right now, retrying automatically.</p>';
+    if(VIEW==='home'&&app&&!document.getElementById('akerr'))app.insertAdjacentHTML('afterbegin','<p class="mu" id="akerr" style="text-align:center;padding:16px">AniList is slow right now, retrying automatically...</p>');
     if(++HL<6)setTimeout(loadHome,Math.max(4000,window.akBlockUntil-Date.now()+500));
   });
 }
@@ -178,20 +223,22 @@ qi.parentNode.replaceChild(nq,qi);q=nq;
 nq.addEventListener('input',function(){
   var v=nq.value.trim();clearTimeout(ST_T);
   if(!v){sr.className='';sr.innerHTML='';return}
-  if(v.length<2)return;
-  sr.className='on';sr.innerHTML='<div class="sri"><span>Searching...</span></div>';
+  if(v.length<2){sr.className='';return}
+  var loc=localMatches(v);
+  if(loc.length){RES=loc;sr.className='on';sr.innerHTML=srHtml(loc)}
+  else{sr.className='on';sr.innerHTML='<div class="sri"><span>Searching...</span></div>'}
   ST_T=setTimeout(function(){
     gql(SQ,{s:v}).then(function(d){
       if(nq.value.trim()!==v)return;
-      RES=d.Page.media.map(cvt);saveKN();
+      RES=rankSearch(d.Page.media,v).slice(0,6).map(cvt);saveKN();
       sr.className='on';
       sr.innerHTML=RES.length?RES.map(function(a,i){return '<div class="sri" onclick="akPick('+i+')"><b>'+esc(a[1])+'</b><span>★ '+a[0]+' · '+esc(a[2])+'</span></div>'}).join(''):'<div class="sri"><span>No results found</span></div>';
     }).catch(function(){
       if(nq.value.trim()!==v)return;
-      RES=ALL.filter(function(a){return a[1].toLowerCase().indexOf(v.toLowerCase())>-1}).slice(0,6);
+      RES=localMatches(v);
       sr.innerHTML=RES.length?RES.map(function(a,i){return '<div class="sri" onclick="akPick('+i+')"><b>'+esc(a[1])+'</b><span>★ '+a[0]+' · '+esc(a[2])+'</span></div>'}).join(''):'<div class="sri"><span>Search failed. Check your internet.</span></div>';
     });
-  },600);
+  },450);
 });
 function openEntry(a){
   var k=ALL.findIndex(function(x){return x[1]===a[1]});
@@ -215,15 +262,20 @@ window.closeSheet=function(){oc();if(akExtra>-1&&akExtra===ALL.length-1)ALL.pop(
 
 var HERO=[],HI=0,newW=null,oldW=document.getElementById('hero').parentNode;
 function heroWrap(){return newW||oldW}
+var heroLive=0;
+function ensureHero(){
+  if(newW)return;
+  newW=document.createElement('div');newW.className='frame';newW.style.margin='16px 16px 0';
+  newW.innerHTML='<div class="akh" id="akh"><div class="akh-c"><div class="akh-p akh-sk"></div><div class="akh-i"><div class="sk-l" style="width:40%"></div><div class="sk-l" style="width:85%;height:20px"></div><div class="sk-l" style="width:60%"></div><div class="sk-l" style="width:46%;height:34px;border-radius:99px"></div></div></div><div class="akh-d"></div></div>';
+  oldW.parentNode.insertBefore(newW,oldW);oldW.style.display='none';
+  newW.style.display=VIEW==='home'?'':'none';
+}
 function initHero(sets){
-  var l=sets[0][2].filter(function(a){return a[4]}).slice(0,5);
+  var all=sets[0][2],l=all.filter(function(a){return a[4]}).slice(0,5);
+  if(l.length<3)l=all.filter(function(a){return a[4]||a[3]}).slice(0,5);
   if(!l.length)return;
-  HERO=l;
-  if(!newW){
-    newW=document.createElement('div');newW.className='frame';newW.style.margin='16px 16px 0';
-    newW.innerHTML='<div class="akh" id="akh"></div>';
-    oldW.parentNode.insertBefore(newW,oldW);oldW.style.display='none';
-    newW.style.display=VIEW==='home'?'':'none';
+  HERO=l;ensureHero();
+  if(!heroLive){heroLive=1;
     var sx=0;
     newW.addEventListener('touchstart',function(e){sx=e.touches[0].clientX},{passive:true});
     newW.addEventListener('touchend',function(e){var dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>50)heroGo(HI+(dx<0?1:-1))},{passive:true});
@@ -237,7 +289,8 @@ function heroGo(i){HI=(i+HERO.length)%HERO.length;heroDraw()}
 function heroDraw(){
   var a=HERO[HI],m=a[2].split(' • '),i,dots='',inl=!!U&&U.list.indexOf(a[1])>-1;
   for(i=0;i<HERO.length;i++)dots+='<span class="'+(i===HI?'on':'')+'" onclick="akHG('+i+')"></span>';
-  document.getElementById('akh').innerHTML='<div class="akh-bg" style="background-image:url('+cu(a[4])+')"></div><div class="akh-shade"></div><div class="akh-c">'+(a[3]?'<img class="akh-p" alt="" onerror="akImgRetry(this)" src="'+esc(a[3])+'">':'')+'<div class="akh-i"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div></div><div class="akh-d">'+dots+'</div>';
+  document.getElementById('akh').innerHTML='<div class="akh-bg" id="akbg"></div><div class="akh-shade"></div><div class="akh-c">'+(a[3]?'<img class="akh-p" alt="" onerror="akImgRetry(this)" data-o="'+esc(a[3])+'" src="'+esc(akPx(a[3],220))+'">':'')+'<div class="akh-i"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div></div><div class="akh-d">'+dots+'</div>';
+  akBg(document.getElementById('akbg'),a[4]||a[3]);
 }
 window.akHG=heroGo;
 window.akHP=function(){openEntry(HERO[HI]);play()};
@@ -254,5 +307,5 @@ window.akGo=function(s){NV=1;try{
   }
 }finally{NV=0}};
 
-loadHome();
+ensureHero();loadHome();
 })();
