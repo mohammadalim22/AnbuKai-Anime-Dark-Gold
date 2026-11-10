@@ -1,9 +1,9 @@
 /* =====================================================
-   COMPLETE player.js  (Anivexa Sub/Dub)
+   COMPLETE player.js (Anivexa Sub/Dub)
    - Hindi & Bangla removed
-   - Download button (saves to phone Downloads / gallery)
+   - Download button fixed (Works without playing video + 403 bypass via new tab)
    - "Try again" tip under the player
-   - All text goes through t()  (i18n.js)
+   - All text goes through t() (i18n.js)
    ===================================================== */
 
 var SH = {};
@@ -71,7 +71,6 @@ function titleKey(title) {
   return String(title || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-/* Only Sub & Dub are available now */
 function playerLanguages() {
   var base = typeof LANGS !== 'undefined' ? LANGS : [['sub', 'Sub'], ['dub', 'Dub']];
   var out = base.filter(function (item) { return item[0] === 'sub' || item[0] === 'dub'; });
@@ -86,11 +85,7 @@ function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-
-/* ================= SEASON CHAIN =================
-   AniList keeps every season as its own entry (own ID). The Sub/Dub API
-   needs that exact ID, so we walk PREQUEL / SEQUEL links to build
-   Season 1..N and use the matching ID for the season the user selected. */
+/* ================= SEASON CHAIN ================= */
 var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
 var SEASON_FIELDS = 'id type format episodes status seasonYear startDate{year} title{romaji english} nextAiringEpisode{episode}';
 var SEASON_QUERY = 'query($id:Int){Media(id:$id,type:ANIME){' + SEASON_FIELDS + ' relations{edges{relationType(version:2) node{' + SEASON_FIELDS + '}}}}}';
@@ -523,7 +518,7 @@ async function mountStream(stream, session, provider) {
   var top = preparePlayerTop();
   if (!top) throw new Error('Player container missing');
 
-  session.currentStream = stream; // used by the Download button
+  session.currentStream = stream;
 
   if (stream.type === 'iframe') {
     var frame = document.createElement('iframe');
@@ -702,7 +697,7 @@ async function mountStream(stream, session, provider) {
   });
 }
 
-/* ================= DOWNLOAD (saves to phone Downloads / gallery) ================= */
+/* ================= DOWNLOAD ================= */
 var dl = { busy: false, ctl: null };
 
 function fmtMB(bytes) { return (bytes / 1048576).toFixed(1) + ' MB'; }
@@ -739,8 +734,23 @@ function saveBlob(blob, name) {
 }
 
 async function downloadFile(url, signal, progress) {
-  var response = await fetch(url, { signal: signal });
-  if (!response.ok) throw new Error('HTTP ' + response.status);
+  var response;
+  try {
+    response = await fetch(url, { signal: signal });
+  } catch (e) {
+    // Fallback for CORS issues
+    window.open(url, '_blank');
+    throw new Error('CORS blocked. Opened in new tab.');
+  }
+  
+  if (!response.ok) {
+    if (response.status === 403 || response.status === 401) {
+        window.open(url, '_blank');
+        throw new Error('Server returned 403. Opened in new tab.');
+    }
+    throw new Error('HTTP ' + response.status);
+  }
+
   var total = Number(response.headers.get('content-length')) || 0;
   var type = response.headers.get('content-type') || 'video/mp4';
   var ext = /webm/i.test(url + type) ? 'webm' : 'mp4';
@@ -911,36 +921,65 @@ async function findDownloadableStream(session, signal) {
 
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
-  var session = activePlayback;
-  var stream = session && session.currentStream;
-  if (!stream) { toast(t('Press Watch Now first, then download.')); return; }
-
+  
+  var stream = activePlayback && activePlayback.currentStream;
   var anime = ALL[SH.i];
-  var title = anime ? anime[1] : 'anime';
+  if (!anime) return;
+
+  var title = anime[1];
   var season = SH.s;
   var episode = SH.e;
+  var audio = SH.l === 'dub' ? 'dub' : 'sub';
 
   dl.busy = true;
   dl.ctl = new AbortController();
   dlButton(true);
-  dlUi(-2, t('Downloading') + '…');
+  dlUi(-2, t('Finding download link') + '…');
+
   var progress = function (pct, text) { dlUi(pct, t('Downloading') + ' · ' + text); };
 
   try {
-    if (stream.type === 'iframe') {
-      dlUi(-2, t('Finding a downloadable source') + '…');
-      stream = await findDownloadableStream(session, dl.ctl.signal);
-      if (!stream) throw new Error(t('No downloadable source found for this episode.'));
+    // If no stream or it's an iframe, we need to fetch a direct link
+    if (!stream || stream.type === 'iframe') {
+        var id = getAnimeId(anime);
+        if (SH.chain && !hasVid(anime[1])) {
+            var seasonEntry = SH.chain[SH.s - 1];
+            if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
+        }
+        if (!id) throw new Error(t('Anime ID not found.'));
+
+        dlUi(-2, t('Finding a downloadable source') + '…');
+        
+        var tempSession = {
+            animeId: id,
+            state: { e: episode, provider: SH.provider || 'auto' },
+            audio: audio
+        };
+        
+        stream = await findDownloadableStream(tempSession, dl.ctl.signal);
+        if (!stream) throw new Error(t('No downloadable source found. Try playing first or choose a different provider.'));
     }
-    var result = stream.type === 'hls'
-      ? await downloadHls(stream.url, dl.ctl.signal, progress)
-      : await downloadFile(stream.url, dl.ctl.signal, progress);
+
+    var result;
+    if (stream.type === 'hls') {
+        result = await downloadHls(stream.url, dl.ctl.signal, progress);
+    } else {
+        result = await downloadFile(stream.url, dl.ctl.signal, progress);
+    }
+    
     saveBlob(result.blob, dlFileName(title, season, episode, result.ext));
     dlUi(100, t('Saved to your Downloads ✓'));
     toast(t('Saved to your Downloads ✓'));
   } catch (error) {
-    if (dl.ctl && dl.ctl.signal.aborted) dlUi(0, t('Download cancelled'), true);
-    else { dlUi(0, t('Download failed') + ': ' + error.message, true); console.warn('Download:', error); if (dl.ctl) dl.ctl.abort(); }
+    if (dl.ctl && dl.ctl.signal.aborted) {
+        dlUi(0, t('Download cancelled'), true);
+    } else {
+        dlUi(0, t('Download failed') + ': ' + error.message, true);
+        console.warn('Download:', error);
+        if (error.message.includes('Opened in new tab')) {
+            toast(t('Server blocked direct download. Opened in new tab!'));
+        }
+    }
   } finally {
     dl.busy = false;
     dl.ctl = null;
@@ -1032,7 +1071,6 @@ async function startPlayback(session) {
   if (!playerIsCurrent(run)) return;
 
   // SUB & DUB (Anivexa API) LOGIC
-  // wait until the season list is known; applySeasonChain() restarts playback itself
   if (!SH.chainReady) {
     showPlayerMessage('Finding seasons...', String(anime[1]));
     return;
@@ -1120,7 +1158,7 @@ function openSheet(index) {
   var sheet = document.getElementById('sheet');
   if (!sheet) return;
 
-  var language = preferences.lang === 'dub' ? 'dub' : 'sub'; // Hindi/Bangla removed
+  var language = preferences.lang === 'dub' ? 'dub' : 'sub';
 
   SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, provider: 'auto', src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
 
