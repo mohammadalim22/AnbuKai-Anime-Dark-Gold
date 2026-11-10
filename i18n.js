@@ -82,6 +82,8 @@
     ['Player error', 'プレーヤーエラー', 'প্লেয়ার এরর'],
     ['Press Watch Now first, then download.', '先に「今すぐ見る」を押してからダウンロードしてください。', 'আগে “এখনই দেখো” চাপো, তারপর ডাউনলোড করো।'],
     ['Embedded players cannot be downloaded. Choose another source.', '埋め込みプレーヤーはダウンロードできません。別のソースを選んでください。', 'এম্বেড প্লেয়ার ডাউনলোড হয় না। অন্য সোর্স বেছে নাও।'],
+    ['Finding a downloadable source', 'ダウンロード可能なソースを検索中', 'ডাউনলোডযোগ্য সোর্স খোঁজা হচ্ছে'],
+    ['No downloadable source found for this episode.', 'このエピソードにはダウンロード可能なソースがありません。', 'এই পর্বের জন্য ডাউনলোডযোগ্য সোর্স পাওয়া যায়নি।'],
     ['Downloading', 'ダウンロード中', 'ডাউনলোড হচ্ছে'],
     ['Saved to your Downloads ✓', 'ダウンロードに保存しました ✓', 'ডাউনলোডে সেভ হয়েছে ✓'],
     ['Download cancelled', 'ダウンロードをキャンセルしました', 'ডাউনলোড বাতিল হয়েছে'],
