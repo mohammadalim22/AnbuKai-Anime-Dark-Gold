@@ -552,9 +552,19 @@ html header{transform:translateZ(0)}
 }
 
 /* =====================================================================
-   V5: LIGHT theme = clean white (like the Claude app), soft glass.
-   Auto = cream/yellow, Dark = dark (unchanged).
+   V5/V6: Auto + Light themes with clearly visible liquid glass.
+   Auto = cream/yellow, Light = white, Dark = unchanged.
    ===================================================================== */
+
+/* ---- shared glass recipe (Auto + Light) ---- */
+:root:not([data-theme="dark"]){
+  --gring:rgba(150,110,0,.10);
+  --gdrop:rgba(120,90,0,.35);
+  --gs:linear-gradient(180deg,rgba(255,255,255,.62),rgba(255,255,255,0) 46%),linear-gradient(135deg,var(--g-a),var(--g-b));
+  --gedge:inset 1.5px 1.5px 0 rgba(255,255,255,.95),inset -1px -1px 0 rgba(255,255,255,.55),inset 0 0 20px rgba(255,255,255,.5),0 0 0 1px var(--gring),0 10px 24px -12px var(--gdrop);
+}
+
+/* ---- Light = white ---- */
 :root[data-theme="light"]{
   --bg:#fafaf8;
   --s1:#ffffff;
@@ -573,106 +583,108 @@ html header{transform:translateZ(0)}
   --glow1:transparent;
   --glow2:transparent;
   --shadow:rgba(0,0,0,.18);
-  /* glass */
-  --g-a:rgba(255,255,255,.88);
-  --g-b:rgba(255,255,255,.62);
-  --g-bd:rgba(0,0,0,.08);
+  --g-a:rgba(255,255,255,.82);
+  --g-b:rgba(255,255,255,.42);
+  --g-bd:rgba(255,255,255,.95);
   --g-hi:rgba(255,255,255,1);
   --g-lo:rgba(255,255,255,.6);
-  --g-blur:blur(20px) saturate(1.4);
-  --g-shadow:0 1px 2px rgba(0,0,0,.05),0 8px 22px -10px rgba(0,0,0,.16);
+  --g-blur:blur(22px) saturate(1.6);
+  --gring:rgba(60,70,110,.11);
+  --gdrop:rgba(50,70,130,.38);
   color-scheme:light;
 }
-
-/* flat clean page, no coloured blobs */
 :root[data-theme="light"] body{background:#fafaf8}
 
-/* header + dock: frosted white with a thin grey edge */
-:root[data-theme="light"] header{
-  background:rgba(250,250,248,.82);
-  border-bottom:1px solid rgba(0,0,0,.07);
-  box-shadow:none;
+/* soft coloured light that stays fixed behind the page, so the glass has something to bend */
+:root[data-theme="light"]::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(50% 32% at 8% 5%,rgba(255,214,90,.26),transparent 70%),
+    radial-gradient(46% 30% at 98% 24%,rgba(130,170,255,.22),transparent 70%),
+    radial-gradient(50% 32% at 2% 62%,rgba(255,150,200,.18),transparent 70%),
+    radial-gradient(50% 30% at 96% 94%,rgba(120,225,205,.22),transparent 70%);
 }
-:root[data-theme="light"] .dock{
-  background:rgba(255,255,255,.86);
-  border:1px solid rgba(0,0,0,.08);
-  box-shadow:0 1px 2px rgba(0,0,0,.05),0 14px 32px -12px rgba(0,0,0,.22);
+:root:not([data-theme="dark"]):not([data-theme="light"])::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(46% 30% at 98% 26%,rgba(130,170,255,.16),transparent 70%),
+    radial-gradient(50% 32% at 2% 64%,rgba(255,150,200,.14),transparent 70%);
 }
+
+/* ---- every glass surface ---- */
+:root:not([data-theme="dark"]) :is(header,.dock,.search,.ub:not(.li),.genres span,.chips span,.btn.g,.arr button,.seg,.sel,.fi,.lnk,.dng,.mini span,.hi,.avb,.eps button,.np button,.stats div,#toast,.akh-m span,.akh-b .btn.g){
+  background:var(--gs);
+  border:1px solid var(--g-bd);
+  box-shadow:var(--gedge);
+}
+:root:not([data-theme="dark"]) header{border-top:0}
+/* yellow active states stay bright */
+:root:not([data-theme="dark"]) :is(.genres span.on,.genres span:hover,.eps button.on){
+  background:linear-gradient(135deg,rgba(255,243,184,.98),rgba(255,214,64,.92));
+  border-color:rgba(255,255,255,.85);
+  box-shadow:inset 1.5px 1.5px 0 rgba(255,255,255,.95),inset 0 -2px 6px rgba(220,160,0,.35),0 8px 18px -8px rgba(230,170,0,.7);
+}
+
+/* hero */
+:root:not([data-theme="dark"]) .akh{
+  background:var(--gs);
+  border:1px solid var(--g-bd);
+  box-shadow:var(--gedge);
+  color:var(--text);
+}
+:root:not([data-theme="dark"]) .akh-bg{opacity:.95;filter:saturate(1.15)}
+:root:not([data-theme="dark"]) .akh-shade{
+  background:linear-gradient(90deg,rgba(255,255,255,.92),rgba(255,255,255,.72) 55%,rgba(255,255,255,.40));
+}
+:root:not([data-theme="dark"]) .akh-sp{color:var(--ink)}
+:root:not([data-theme="dark"]) .akh-d span{background:rgba(60,70,110,.22)}
+:root:not([data-theme="dark"]) .akh-d span.on{background:var(--tg2)}
+
+/* header + dock: frosted, with a visible bright rim */
 @media (pointer:coarse){
-  html[data-theme="light"] header,
-  html[data-theme="light"] .dock{
-    -webkit-backdrop-filter:blur(16px) saturate(1.3);
-    backdrop-filter:blur(16px) saturate(1.3);
+  :root:not([data-theme="dark"]) :is(header,.dock){
+    -webkit-backdrop-filter:blur(14px) saturate(1.5);
+    backdrop-filter:blur(14px) saturate(1.5);
   }
 }
 
-/* sheet / login / settings: solid white */
-:root[data-theme="light"] #sheet,
-:root[data-theme="light"] #mc{
-  background:#ffffff;
-  border:1px solid rgba(0,0,0,.08);
+/* settings / login pop-up: real glass over the dimmed page */
+:root:not([data-theme="dark"]) #mc{
+  background:linear-gradient(160deg,rgba(255,255,255,.84),rgba(255,255,255,.60));
+  -webkit-backdrop-filter:blur(22px) saturate(1.6);
+  backdrop-filter:blur(22px) saturate(1.6);
+  border:1px solid var(--g-bd);
   border-bottom:0;
-  box-shadow:0 -18px 50px -20px rgba(0,0,0,.28);
+  box-shadow:inset 1.5px 1.5px 0 rgba(255,255,255,.95),0 -18px 50px -20px var(--gdrop);
 }
-:root[data-theme="light"] #sr{
-  background:rgba(255,255,255,.96);
-  border:1px solid rgba(0,0,0,.08);
+@media (pointer:coarse){
+  :root:not([data-theme="dark"]) #mc{-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+}
+/* video sheet stays almost solid (video + comments), but with the same bright rim */
+:root[data-theme="light"] #sheet{
+  background:linear-gradient(160deg,rgba(255,255,255,.985),rgba(246,248,252,.975));
+  box-shadow:inset 1.5px 1.5px 0 #fff,0 -18px 50px -20px rgba(0,0,0,.28);
 }
 :root[data-theme="light"] .sh-top::after{background:linear-gradient(to top,#ffffff,transparent 70%)}
+:root[data-theme="light"] #sr{
+  background:linear-gradient(135deg,rgba(255,255,255,.92),rgba(255,255,255,.70));
+  box-shadow:inset 1.5px 1.5px 0 #fff,0 24px 48px -12px var(--gdrop);
+}
 :root[data-theme="light"] #ov,
-:root[data-theme="light"] #mw{background:rgba(0,0,0,.35)}
+:root[data-theme="light"] #mw{background:rgba(25,30,50,.32)}
 :root[data-theme="light"] .sri:hover{background:rgba(0,0,0,.04)}
 :root[data-theme="light"] footer{border-top:1px solid var(--line)}
+:root[data-theme="light"] .btn.g,
+:root[data-theme="light"] .chips span{color:var(--text)}
 
-/* controls: white pills with a hairline border, like the Claude input box */
-:root[data-theme="light"] .genres span,
-:root[data-theme="light"] .arr button,
-:root[data-theme="light"] .stats div,
-:root[data-theme="light"] .seg,
-:root[data-theme="light"] .sel,
-:root[data-theme="light"] .fi,
-:root[data-theme="light"] .lnk,
-:root[data-theme="light"] .dng,
-:root[data-theme="light"] .mini span,
-:root[data-theme="light"] .hi,
-:root[data-theme="light"] .avb,
-:root[data-theme="light"] .eps button,
-:root[data-theme="light"] .np button,
-:root[data-theme="light"] .ub,
-:root[data-theme="light"] .search{
-  background:#ffffff;
-  border:1px solid rgba(0,0,0,.09);
-  box-shadow:0 1px 2px rgba(0,0,0,.05);
-}
-/* grey chips (like the grey message bubble) */
-:root[data-theme="light"] .chips span,
-:root[data-theme="light"] .btn.g{
-  background:rgba(0,0,0,.055);
-  border:1px solid rgba(0,0,0,.06);
-  box-shadow:none;
-  color:var(--text);
-}
-/* yellow active states stay bright */
-:root[data-theme="light"] .genres span.on,
-:root[data-theme="light"] .genres span:hover,
-:root[data-theme="light"] .eps button.on,
-:root[data-theme="light"] .seg .on,
-:root[data-theme="light"] .dock a.on{
-  background:linear-gradient(135deg,rgba(255,243,184,.98),rgba(255,214,64,.9));
-  border-color:rgba(255,255,255,.8);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 6px 14px -8px rgba(230,170,0,.7);
-}
-
-/* hero on white */
-:root[data-theme="light"] .akh{
-  background:#ffffff;
-  border:1px solid rgba(0,0,0,.08);
-  box-shadow:0 1px 2px rgba(0,0,0,.05),0 14px 30px -16px rgba(0,0,0,.22);
-}
-:root[data-theme="light"] .akh-shade{
-  background:linear-gradient(90deg,rgba(255,255,255,.96),rgba(255,255,255,.82) 55%,rgba(255,255,255,.5));
-}
-:root[data-theme="light"] .akh-m span{background:rgba(0,0,0,.055);border:1px solid rgba(0,0,0,.06);box-shadow:none}
-:root[data-theme="light"] .akh-b .btn.g{background:rgba(0,0,0,.055);border:1px solid rgba(0,0,0,.06);box-shadow:none}
-:root[data-theme="light"] .akh-d span{background:rgba(0,0,0,.18)}
-:root[data-theme="light"] .akh-d span.on{background:var(--tg2)}
+/* ---- loading placeholders (skeleton + poster shimmer) ---- */
+@keyframes akshim{to{background-position:-200% 0}}
+.sk-l{height:12px;border-radius:8px;margin:8px 0;background:linear-gradient(110deg,rgba(0,0,0,.06) 30%,rgba(0,0,0,.13) 50%,rgba(0,0,0,.06) 70%);background-size:200% 100%;animation:akshim 1.3s linear infinite}
+.akh-sk,.card.sk .poster{background:linear-gradient(110deg,rgba(0,0,0,.07) 30%,rgba(0,0,0,.14) 50%,rgba(0,0,0,.07) 70%);background-size:200% 100%;animation:akshim 1.3s linear infinite}
+:root[data-theme="dark"] .sk-l{background:linear-gradient(110deg,rgba(255,255,255,.06) 30%,rgba(255,255,255,.14) 50%,rgba(255,255,255,.06) 70%);background-size:200% 100%}
+:root[data-theme="dark"] .akh-sk,
+:root[data-theme="dark"] .card.sk .poster{background:linear-gradient(110deg,rgba(255,255,255,.07) 30%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.07) 70%);background-size:200% 100%}
+.card.sk{pointer-events:none}
+.card.sk .poster::after{display:none}
+img.pi{background:linear-gradient(110deg,#1b1b26 30%,#2c2c3b 50%,#1b1b26 70%);background-size:200% 100%;animation:akshim 1.2s linear infinite}
+img.pi.ld{background:none;animation:none}
