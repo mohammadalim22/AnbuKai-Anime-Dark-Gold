@@ -115,30 +115,44 @@ var seasonChainCache = new Map();
 var seasonNodeCache = new Map();
 var chainToken = 0;
 
+var seasonChainStamp = new Map();
+var seasonCooldown = 0;
+var titleIdCache = new Map();
+
 try {
-  var savedChains = JSON.parse(sessionStorage.getItem('akSeasons1') || '{}');
+  var savedChains = JSON.parse(localStorage.getItem('akSeasons2') || '{}');
   Object.keys(savedChains).forEach(function (key) {
-    if (Array.isArray(savedChains[key])) seasonChainCache.set(Number(key), savedChains[key]);
+    var entry = savedChains[key];
+    if (entry && Array.isArray(entry.c) && Date.now() - entry.t < 3 * 864e5) {
+      seasonChainCache.set(Number(key), entry.c);
+      seasonChainStamp.set(Number(key), entry.t);
+    }
   });
 } catch (error) {}
 
 function saveSeasonChains() {
   try {
-    if (seasonChainCache.size > 150) return;
+    if (seasonChainCache.size > 200) return;
     var out = {};
-    seasonChainCache.forEach(function (chain, key) { out[key] = chain; });
-    sessionStorage.setItem('akSeasons1', JSON.stringify(out));
+    seasonChainCache.forEach(function (chain, key) { out[key] = { t: seasonChainStamp.get(key) || Date.now(), c: chain }; });
+    localStorage.setItem('akSeasons2', JSON.stringify(out));
   } catch (error) {}
+}
+
+function anilistBusy() {
+  return Date.now() < Math.max(seasonCooldown, window.akBlockUntil || 0);
 }
 
 function fetchSeasonNode(id) {
   if (seasonNodeCache.has(id)) return seasonNodeCache.get(id);
+  if (anilistBusy()) return Promise.reject(new Error('AniList busy'));
   var promise = fetchWithTimeout('https://graphql.anilist.co', {
     method: 'POST',
     timeout: 8000,
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ query: SEASON_QUERY, variables: { id: id } })
   }).then(function (response) {
+    if (response.status === 429) seasonCooldown = Date.now() + 60000;
     if (!response.ok) throw new Error('AniList HTTP ' + response.status);
     return response.json();
   }).then(function (json) {
@@ -188,7 +202,7 @@ async function buildSeasonChain(baseId, getNode) {
   var cur = base;
   var hop;
 
-  for (hop = 0; hop < 12; hop++) {
+  for (hop = 0; hop < 8; hop++) {
     var prev = seasonRelations(cur, 'PREQUEL', seen, true)[0];
     if (!prev) break;
     seen.add(prev.id);
@@ -197,7 +211,7 @@ async function buildSeasonChain(baseId, getNode) {
   }
 
   cur = base;
-  for (hop = 0; hop < 12; hop++) {
+  for (hop = 0; hop < 8; hop++) {
     var next = seasonRelations(cur, 'SEQUEL', seen, false)[0];
     if (!next) break;
     seen.add(next.id);
@@ -213,7 +227,7 @@ async function loadSeasonChain(baseId) {
   if (cached) return cached;
   var result = await buildSeasonChain(baseId, fetchSeasonNode);
   if (result.complete) {
-    result.chain.forEach(function (item) { seasonChainCache.set(item.id, result.chain); });
+    result.chain.forEach(function (item) { seasonChainCache.set(item.id, result.chain); seasonChainStamp.set(item.id, Date.now()); });
     saveSeasonChains();
   }
   return result.chain;
@@ -237,6 +251,35 @@ function applySeasonChain(token, chain, baseId) {
   SH.baseS = index + 1;
   if (!isHindi(SH.l) && !SH.sTouched) SH.s = index + 1;
   if (SH.play && !isHindi(SH.l)) paint(true); else paint();
+}
+
+async function resolveAnimeIdByTitle(title) {
+  var key = titleKey(title);
+  if (!key) return null;
+  if (titleIdCache.has(key)) return titleIdCache.get(key);
+  if (anilistBusy()) return null;
+  try {
+    var response = await fetchWithTimeout('https://graphql.anilist.co', {
+      method: 'POST',
+      timeout: 8000,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: 'query($s:String){Media(search:$s,type:ANIME,sort:SEARCH_MATCH){id}}', variables: { s: String(title) } })
+    });
+    if (response.status === 429) { seasonCooldown = Date.now() + 60000; return null; }
+    var json = await response.json();
+    var found = json && json.data && json.data.Media && json.data.Media.id;
+    if (found) { titleIdCache.set(key, found); return found; }
+  } catch (error) {}
+  return null;
+}
+
+function startSeasonChainByTitle(anime) {
+  var token = ++chainToken;
+  SH.chainTok = token;
+  resolveAnimeIdByTitle(anime[1]).then(function (found) {
+    if (!SH || SH.chainTok !== token) return;
+    if (found) { anime[10] = found; startSeasonChain(found); } else { applySeasonChain(token, null, null); }
+  });
 }
 
 function startSeasonChain(baseId) {
@@ -942,7 +985,13 @@ async function startPlayback(session) {
     if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
   }
   if (!id) {
-    showPlayerMessage('Video not found', 'No AniList ID. Hindi mode can search by title.', true);
+    showPlayerMessage('Finding AniList ID...', String(anime[1]));
+    id = await resolveAnimeIdByTitle(anime[1]);
+    if (!playerIsCurrent(run)) return;
+    if (id) anime[10] = id;
+  }
+  if (!id) {
+    showPlayerMessage('Video not found', 'No AniList ID yet (AniList may be busy). Press Retry in a minute, or use Hindi mode.', true);
     return;
   }
 
@@ -1029,7 +1078,7 @@ function openSheet(index) {
   document.body.style.overflow = 'hidden';
 
   var baseAnimeId = getAnimeId(anime);
-  if (!baseAnimeId || hasVid(anime[1])) { SH.chainReady = true; } else { startSeasonChain(baseAnimeId); }
+  if (hasVid(anime[1])) { SH.chainReady = true; } else if (baseAnimeId) { startSeasonChain(baseAnimeId); } else { startSeasonChainByTitle(anime); }
 
   paint();
   warmHlsLibrary();
