@@ -550,3 +550,129 @@ html header{transform:translateZ(0)}
   .akh-t{font-size:1.9rem}
   .akh-c{padding:28px 28px 6px}
 }
+
+/* =====================================================================
+   V5: LIGHT theme = clean white (like the Claude app), soft glass.
+   Auto = cream/yellow, Dark = dark (unchanged).
+   ===================================================================== */
+:root[data-theme="light"]{
+  --bg:#fafaf8;
+  --s1:#ffffff;
+  --text:#1a1a18;
+  --muted:#6f6f6a;
+  --gold:#ffe680;
+  --gold2:#fff3b8;
+  --gold3:#f5c842;
+  --ink:#7a5f00;
+  --tg1:#c99200;--tg2:#e6a800;--tg3:#9a6a00;
+  --line:rgba(0,0,0,.08);
+  --glass:rgba(250,250,248,.82);
+  --gl:rgba(255,214,64,.85);
+  --gline:rgba(0,0,0,.12);
+  --chip:rgba(0,0,0,.055);
+  --glow1:transparent;
+  --glow2:transparent;
+  --shadow:rgba(0,0,0,.18);
+  /* glass */
+  --g-a:rgba(255,255,255,.88);
+  --g-b:rgba(255,255,255,.62);
+  --g-bd:rgba(0,0,0,.08);
+  --g-hi:rgba(255,255,255,1);
+  --g-lo:rgba(255,255,255,.6);
+  --g-blur:blur(20px) saturate(1.4);
+  --g-shadow:0 1px 2px rgba(0,0,0,.05),0 8px 22px -10px rgba(0,0,0,.16);
+  color-scheme:light;
+}
+
+/* flat clean page, no coloured blobs */
+:root[data-theme="light"] body{background:#fafaf8}
+
+/* header + dock: frosted white with a thin grey edge */
+:root[data-theme="light"] header{
+  background:rgba(250,250,248,.82);
+  border-bottom:1px solid rgba(0,0,0,.07);
+  box-shadow:none;
+}
+:root[data-theme="light"] .dock{
+  background:rgba(255,255,255,.86);
+  border:1px solid rgba(0,0,0,.08);
+  box-shadow:0 1px 2px rgba(0,0,0,.05),0 14px 32px -12px rgba(0,0,0,.22);
+}
+@media (pointer:coarse){
+  html[data-theme="light"] header,
+  html[data-theme="light"] .dock{
+    -webkit-backdrop-filter:blur(16px) saturate(1.3);
+    backdrop-filter:blur(16px) saturate(1.3);
+  }
+}
+
+/* sheet / login / settings: solid white */
+:root[data-theme="light"] #sheet,
+:root[data-theme="light"] #mc{
+  background:#ffffff;
+  border:1px solid rgba(0,0,0,.08);
+  border-bottom:0;
+  box-shadow:0 -18px 50px -20px rgba(0,0,0,.28);
+}
+:root[data-theme="light"] #sr{
+  background:rgba(255,255,255,.96);
+  border:1px solid rgba(0,0,0,.08);
+}
+:root[data-theme="light"] .sh-top::after{background:linear-gradient(to top,#ffffff,transparent 70%)}
+:root[data-theme="light"] #ov,
+:root[data-theme="light"] #mw{background:rgba(0,0,0,.35)}
+:root[data-theme="light"] .sri:hover{background:rgba(0,0,0,.04)}
+:root[data-theme="light"] footer{border-top:1px solid var(--line)}
+
+/* controls: white pills with a hairline border, like the Claude input box */
+:root[data-theme="light"] .genres span,
+:root[data-theme="light"] .arr button,
+:root[data-theme="light"] .stats div,
+:root[data-theme="light"] .seg,
+:root[data-theme="light"] .sel,
+:root[data-theme="light"] .fi,
+:root[data-theme="light"] .lnk,
+:root[data-theme="light"] .dng,
+:root[data-theme="light"] .mini span,
+:root[data-theme="light"] .hi,
+:root[data-theme="light"] .avb,
+:root[data-theme="light"] .eps button,
+:root[data-theme="light"] .np button,
+:root[data-theme="light"] .ub,
+:root[data-theme="light"] .search{
+  background:#ffffff;
+  border:1px solid rgba(0,0,0,.09);
+  box-shadow:0 1px 2px rgba(0,0,0,.05);
+}
+/* grey chips (like the grey message bubble) */
+:root[data-theme="light"] .chips span,
+:root[data-theme="light"] .btn.g{
+  background:rgba(0,0,0,.055);
+  border:1px solid rgba(0,0,0,.06);
+  box-shadow:none;
+  color:var(--text);
+}
+/* yellow active states stay bright */
+:root[data-theme="light"] .genres span.on,
+:root[data-theme="light"] .genres span:hover,
+:root[data-theme="light"] .eps button.on,
+:root[data-theme="light"] .seg .on,
+:root[data-theme="light"] .dock a.on{
+  background:linear-gradient(135deg,rgba(255,243,184,.98),rgba(255,214,64,.9));
+  border-color:rgba(255,255,255,.8);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 6px 14px -8px rgba(230,170,0,.7);
+}
+
+/* hero on white */
+:root[data-theme="light"] .akh{
+  background:#ffffff;
+  border:1px solid rgba(0,0,0,.08);
+  box-shadow:0 1px 2px rgba(0,0,0,.05),0 14px 30px -16px rgba(0,0,0,.22);
+}
+:root[data-theme="light"] .akh-shade{
+  background:linear-gradient(90deg,rgba(255,255,255,.96),rgba(255,255,255,.82) 55%,rgba(255,255,255,.5));
+}
+:root[data-theme="light"] .akh-m span{background:rgba(0,0,0,.055);border:1px solid rgba(0,0,0,.06);box-shadow:none}
+:root[data-theme="light"] .akh-b .btn.g{background:rgba(0,0,0,.055);border:1px solid rgba(0,0,0,.06);box-shadow:none}
+:root[data-theme="light"] .akh-d span{background:rgba(0,0,0,.18)}
+:root[data-theme="light"] .akh-d span.on{background:var(--tg2)}
