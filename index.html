@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>AnbuKai Anime – Your Anime World</title>
+
+<!-- ===== PWA (App Install) এর জন্য নতুন যোগ করা হলো ===== -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#e9c46a">
+<!-- ==================================================== -->
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://wsrv.nl" crossorigin>
 <link rel="preconnect" href="https://s4.anilist.co" crossorigin>
@@ -58,5 +64,18 @@
 <!-- Mobile console (debug only). Remove these 2 lines when the site is final. -->
 <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
 <script>eruda.init();</script>
+
+<!-- ===== Service Worker রেজিস্ট্রেশন (অ্যাপ ইনস্টল করার জন্য) ===== -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/AnbuKai-Anime-Dark-Gold/sw.js')
+        .then((reg) => console.log('Service Worker registered!', reg))
+        .catch((err) => console.log('Service Worker registration failed:', err));
+    });
+  }
+</script>
+<!-- ============================================================== -->
+
 </body>
 </html>
