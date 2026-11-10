@@ -39,10 +39,17 @@ sty.textContent='.gv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
 +'.akh-d span.on{width:22px;background:#e9c46a}';
 document.head.appendChild(sty);
 
+window.akBlockUntil=0;
+window.akImgRetry=function(i){var n=+i.dataset.r||0;if(n<3){i.dataset.r=n+1;setTimeout(function(){var s=i.getAttribute('src');i.removeAttribute('src');i.src=s},1500*(n+1))}};
 function gql(q,v){
-  return fetch('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:q,variables:v||{}})})
-  .then(function(r){return r.json()})
-  .then(function(j){if(j.errors||!j.data)throw new Error(j.errors&&j.errors[0]&&j.errors[0].message||'No data');return j.data});
+  if(Date.now()<window.akBlockUntil)return Promise.reject(new Error('AniList is busy, retrying soon'));
+  var ctl=window.AbortController?new AbortController():null,tm=ctl?setTimeout(function(){ctl.abort()},15000):0;
+  return fetch('https://graphql.anilist.co',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:q,variables:v||{}}),signal:ctl?ctl.signal:undefined})
+  .then(function(r){
+    if(r.status===429){var w=parseInt(r.headers.get('Retry-After'),10)||60;window.akBlockUntil=Date.now()+w*1000;throw new Error('Too many requests, retry in '+w+'s')}
+    return r.json()})
+  .then(function(j){if(j.errors||!j.data)throw new Error(j.errors&&j.errors[0]&&j.errors[0].message||'No data');return j.data})
+  .then(function(d){clearTimeout(tm);return d},function(e){clearTimeout(tm);throw e});
 }
 function fm(f){return f==='MOVIE'?'Movie':f==='TV_SHORT'?'TV Short':f||'TV'}
 
@@ -66,7 +73,7 @@ function saveKN(){
 function resetAll(){ALL.length=0;akExtra=-1}
 function cardH(a,i){
   var c=C[i%5],x=55+((i*19)%40);
-  return '<div class="card" onclick="openSheet('+i+')"><div class="frame"><div class="poster" style="background:radial-gradient(85% 60% at '+x+'% 0%,rgba('+c+',.4),transparent 68%),#0c0c14">'+(a[3]?'<img class="pi" loading="lazy" alt="" src="'+esc(a[3])+'">':'')+'<span class="rate">'+a[0]+'</span>'+(a[2].indexOf('ONGOING')>-1?'<span class="nw">NEW</span>':'')+'<button class="bm" aria-label="Bookmark"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg></button><span class="l">'+esc(a[1].charAt(0))+'</span></div></div><h3>'+esc(a[1])+'</h3><small>'+esc(a[2])+'</small></div>';
+  return '<div class="card" onclick="openSheet('+i+')"><div class="frame"><div class="poster" style="background:radial-gradient(85% 60% at '+x+'% 0%,rgba('+c+',.4),transparent 68%),#0c0c14">'+(a[3]?'<img class="pi" loading="lazy" alt="" onerror="akImgRetry(this)" src="'+esc(a[3])+'">':'')+'<span class="rate">'+a[0]+'</span>'+(a[2].indexOf('ONGOING')>-1?'<span class="nw">NEW</span>':'')+'<button class="bm" aria-label="Bookmark"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg></button><span class="l">'+esc(a[1].charAt(0))+'</span></div></div><h3>'+esc(a[1])+'</h3><small>'+esc(a[2])+'</small></div>';
 }
 function arrows(){
   document.querySelectorAll('.arr button').forEach(function(b){
@@ -96,18 +103,32 @@ function showHome(){
   VIEW='home';TOK++;chrome(1,1);dock(0);chip(0);window.scrollTo(0,0);
   if(HOME)buildHome(HOME);else loadHome();
 }
+/* home loader: last good data (with images + AniList ids) is kept in localStorage and shown at once;
+   a quiet refresh runs only when it is older than 30 min. Failures retry by themselves. */
+var HL=0;
+function okSets(c){
+  try{return !!(c&&c.d&&c.d.length===3&&c.d.every(function(s){return s[2]&&s[2].length>5&&s[2].every(function(a){return a&&a[10]})}))}catch(e){return false}
+}
+function paintHome(sets){
+  sets.forEach(function(s){s[2].forEach(function(a){EPN[a[1]]=a[5];KN[a[1]]=a})});
+  HOME=sets;initHero(sets);if(VIEW==='home')buildHome(sets);
+}
 function loadHome(){
-  var cache=null;try{cache=JSON.parse(sessionStorage.getItem('akAL2'))}catch(e){}
-  if(cache&&Date.now()-cache.t<6e5){
-    cache.d.forEach(function(s){s[2].forEach(function(a){EPN[a[1]]=a[5];KN[a[1]]=a})});
-    HOME=cache.d;initHero(HOME);if(VIEW==='home')buildHome(HOME);return;
-  }
+  var c=null;try{c=JSON.parse(localStorage.getItem('akAL3'))}catch(e){}
+  if(!okSets(c))c=null;
+  var fresh=!!c&&Date.now()-c.t<18e5;
+  if(c&&!HOME)paintHome(c.d);
+  if(fresh)return;
   gql(HQ).then(function(d){
     var sets=[['TRENDING','Trending Now',d.t.media.map(cvt)],['TOP 10','Top Rated',d.r.media.map(cvt)],['FAN FAVORITES','Popular',d.p.media.map(cvt)]];
-    try{sessionStorage.setItem('akAL2',JSON.stringify({t:Date.now(),d:sets}))}catch(e){}
-    saveKN();HOME=sets;initHero(sets);
-    if(VIEW==='home')buildHome(sets);
-  }).catch(function(){});
+    try{localStorage.setItem('akAL3',JSON.stringify({t:Date.now(),d:sets}))}catch(e){}
+    saveKN();HL=0;paintHome(sets);
+  }).catch(function(){
+    if(HOME)return;
+    var app=document.getElementById('app');
+    if(VIEW==='home'&&app&&!app.innerHTML.trim())app.innerHTML='<p class="mu" style="text-align:center;padding:40px 16px">Loading anime... AniList is slow right now, retrying automatically.</p>';
+    if(++HL<6)setTimeout(loadHome,Math.max(4000,window.akBlockUntil-Date.now()+500));
+  });
 }
 
 function browse(o){
@@ -157,6 +178,7 @@ qi.parentNode.replaceChild(nq,qi);q=nq;
 nq.addEventListener('input',function(){
   var v=nq.value.trim();clearTimeout(ST_T);
   if(!v){sr.className='';sr.innerHTML='';return}
+  if(v.length<2)return;
   sr.className='on';sr.innerHTML='<div class="sri"><span>Searching...</span></div>';
   ST_T=setTimeout(function(){
     gql(SQ,{s:v}).then(function(d){
@@ -169,7 +191,7 @@ nq.addEventListener('input',function(){
       RES=ALL.filter(function(a){return a[1].toLowerCase().indexOf(v.toLowerCase())>-1}).slice(0,6);
       sr.innerHTML=RES.length?RES.map(function(a,i){return '<div class="sri" onclick="akPick('+i+')"><b>'+esc(a[1])+'</b><span>★ '+a[0]+' · '+esc(a[2])+'</span></div>'}).join(''):'<div class="sri"><span>Search failed. Check your internet.</span></div>';
     });
-  },350);
+  },600);
 });
 function openEntry(a){
   var k=ALL.findIndex(function(x){return x[1]===a[1]});
@@ -215,7 +237,7 @@ function heroGo(i){HI=(i+HERO.length)%HERO.length;heroDraw()}
 function heroDraw(){
   var a=HERO[HI],m=a[2].split(' • '),i,dots='',inl=!!U&&U.list.indexOf(a[1])>-1;
   for(i=0;i<HERO.length;i++)dots+='<span class="'+(i===HI?'on':'')+'" onclick="akHG('+i+')"></span>';
-  document.getElementById('akh').innerHTML='<div class="akh-bg" style="background-image:url('+cu(a[4])+')"></div><div class="akh-shade"></div><div class="akh-c">'+(a[3]?'<img class="akh-p" alt="" src="'+esc(a[3])+'">':'')+'<div class="akh-i"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div></div><div class="akh-d">'+dots+'</div>';
+  document.getElementById('akh').innerHTML='<div class="akh-bg" style="background-image:url('+cu(a[4])+')"></div><div class="akh-shade"></div><div class="akh-c">'+(a[3]?'<img class="akh-p" alt="" onerror="akImgRetry(this)" src="'+esc(a[3])+'">':'')+'<div class="akh-i"><div class="akh-sp"><i></i>#'+(HI+1)+' SPOTLIGHT</div><h1 class="akh-t">'+esc(a[1])+'</h1><div class="akh-m"><span class="r">★ '+a[0]+'</span><span>'+esc(a[8]||'TV')+'</span>'+(a[9]?'<span>'+a[9]+' min</span>':'')+'<span>'+esc(m[1]||'')+'</span></div><div class="akh-b"><button class="btn" onclick="akHP()">▶ Watch Now</button><button class="btn g" onclick="akHL()">'+(inl?'✓ In My List':'+ My List')+'</button></div></div></div><div class="akh-d">'+dots+'</div>';
 }
 window.akHG=heroGo;
 window.akHP=function(){openEntry(HERO[HI]);play()};
