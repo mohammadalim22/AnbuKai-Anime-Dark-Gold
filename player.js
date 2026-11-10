@@ -890,11 +890,30 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
+/* Embedded (iframe) players cannot be saved, so look for a direct MP4/HLS stream from the providers */
+async function findDownloadableStream(session, signal) {
+  var id = session && session.animeId;
+  if (!id) return null;
+  var list = STREAM_PROVIDERS.slice();
+  var chosen = session.state && session.state.provider;
+  if (chosen && chosen !== 'auto' && list.indexOf(chosen) > -1) list = [chosen].concat(list.filter(function (x) { return x !== chosen; }));
+  for (var i = 0; i < list.length; i++) {
+    if (signal.aborted) return null;
+    try {
+      var streams = playableSources(await fetchProviderStreams(list[i], id, session.state.e, session.audio || 'sub'), list[i]);
+      for (var j = 0; j < streams.length; j++) {
+        if (streams[j].type === 'video' || streams[j].type === 'hls') return streams[j];
+      }
+    } catch (error) {}
+  }
+  return null;
+}
+
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
-  var stream = activePlayback && activePlayback.currentStream;
+  var session = activePlayback;
+  var stream = session && session.currentStream;
   if (!stream) { toast(t('Press Watch Now first, then download.')); return; }
-  if (stream.type === 'iframe') { toast(t('Embedded players cannot be downloaded. Choose another source.')); return; }
 
   var anime = ALL[SH.i];
   var title = anime ? anime[1] : 'anime';
@@ -908,6 +927,11 @@ async function downloadCurrent() {
   var progress = function (pct, text) { dlUi(pct, t('Downloading') + ' · ' + text); };
 
   try {
+    if (stream.type === 'iframe') {
+      dlUi(-2, t('Finding a downloadable source') + '…');
+      stream = await findDownloadableStream(session, dl.ctl.signal);
+      if (!stream) throw new Error(t('No downloadable source found for this episode.'));
+    }
     var result = stream.type === 'hls'
       ? await downloadHls(stream.url, dl.ctl.signal, progress)
       : await downloadFile(stream.url, dl.ctl.signal, progress);
@@ -1032,6 +1056,8 @@ async function startPlayback(session) {
 
   var providers = state.provider === 'auto' ? STREAM_PROVIDERS.slice() : [state.provider];
   var audio = state.l === 'dub' ? 'dub' : 'sub';
+  session.animeId = id;
+  session.audio = audio;
 
   for (var p = 0; p < providers.length; p++) {
     if (!playerIsCurrent(run)) return;
@@ -1103,6 +1129,7 @@ function openSheet(index) {
   var metadata = String(anime[2] || '').split(' • ');
 
   sheet.innerHTML = '<div class="sh-top" id="shtop" style="background:' + background + '"><button class="sh-x" onclick="closeSheet()" aria-label="Close">✕</button></div>'
+    + '<div class="rtn" id="rtn" style="display:none;margin:10px 10px 0"><span class="rtn-i" aria-hidden="true">⚡</span><p>' + esc(t('No video on the first try? Please try again — it will play 100% on the second attempt.')) + '</p></div>'
     + '<div class="sh-b"><div class="chips"><span class="r">★ ' + anime[0] + '</span>' + metadata.map(function (text) { return '<span>' + esc(text) + '</span>'; }).join('') + '</div>'
     + '<h2>' + esc(anime[1]) + '</h2>' + (anime[7] ? '<p class="ds">' + esc(anime[7]) + '</p>' : '')
     + '<div class="acts"><button class="btn" onclick="play()">▶ ' + esc(t('Watch Now')) + '</button><button class="btn g" id="ml" onclick="toggleList(ALL[SH.i][1])"></button></div>'
@@ -1112,7 +1139,6 @@ function openSheet(index) {
     +   '<div class="prow"><button class="btn sm" onclick="paint(true)">↻ ' + esc(t('Retry current selection')) + '</button>'
     +   '<button class="btn sm dlb" id="dl-btn" onclick="downloadCurrent()">⬇ ' + esc(t('Download')) + '</button></div>'
     +   '<div id="dl-status" class="dls" aria-live="polite"></div>'
-    +   '<div class="rtn"><span class="rtn-i" aria-hidden="true">⚡</span><p>' + esc(t('No video on the first try? Please try again — it will play 100% on the second attempt.')) + '</p></div>'
     +   '<div id="source-tools" style="margin-top:10px"></div>'
     + '</div>'
     + '<div id="np"></div><h4 id="eh" style="display:none">' + esc(t('EPISODES')) + '</h4><div class="eps" id="eps"></div><div id="cm"></div></div>';
@@ -1197,6 +1223,8 @@ function paint(force) {
   document.getElementById('eh').style.display = SH.play ? '' : 'none';
   var tools = document.getElementById('playback-tools');
   if (tools) tools.style.display = SH.play ? '' : 'none';
+  var tip = document.getElementById('rtn');
+  if (tip) tip.style.display = SH.play ? '' : 'none';
 
   if (!SH.play) {
     ['ctl', 'eps', 'np', 'cm'].forEach(function (id) { document.getElementById(id).innerHTML = ''; });
