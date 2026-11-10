@@ -1,9 +1,7 @@
 /* =====================================================
-   COMPLETE player.js (Anivexa Sub/Dub)
+   COMPLETE player.js  (Anivexa Sub/Dub)
    - Hindi & Bangla removed
-   - Download button fixed (Works without playing video + 403 bypass via new tab)
-   - "Try again" tip under the player
-   - All text goes through t() (i18n.js)
+   - Download button fixed (Bypass 403 error, opens in new tab if needed)
    ===================================================== */
 
 var SH = {};
@@ -84,6 +82,7 @@ function stateKey() {
 function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
+
 
 /* ================= SEASON CHAIN ================= */
 var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
@@ -518,7 +517,7 @@ async function mountStream(stream, session, provider) {
   var top = preparePlayerTop();
   if (!top) throw new Error('Player container missing');
 
-  session.currentStream = stream;
+  session.currentStream = stream; 
 
   if (stream.type === 'iframe') {
     var frame = document.createElement('iframe');
@@ -734,23 +733,8 @@ function saveBlob(blob, name) {
 }
 
 async function downloadFile(url, signal, progress) {
-  var response;
-  try {
-    response = await fetch(url, { signal: signal });
-  } catch (e) {
-    // Fallback for CORS issues
-    window.open(url, '_blank');
-    throw new Error('CORS blocked. Opened in new tab.');
-  }
-  
-  if (!response.ok) {
-    if (response.status === 403 || response.status === 401) {
-        window.open(url, '_blank');
-        throw new Error('Server returned 403. Opened in new tab.');
-    }
-    throw new Error('HTTP ' + response.status);
-  }
-
+  var response = await fetch(url, { signal: signal });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
   var total = Number(response.headers.get('content-length')) || 0;
   var type = response.headers.get('content-type') || 'video/mp4';
   var ext = /webm/i.test(url + type) ? 'webm' : 'mp4';
@@ -900,7 +884,6 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
-/* Embedded (iframe) players cannot be saved, so look for a direct MP4/HLS stream from the providers */
 async function findDownloadableStream(session, signal) {
   var id = session && session.animeId;
   if (!id) return null;
@@ -922,44 +905,57 @@ async function findDownloadableStream(session, signal) {
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
   
-  var stream = activePlayback && activePlayback.currentStream;
   var anime = ALL[SH.i];
   if (!anime) return;
-
+  
   var title = anime[1];
   var season = SH.s;
   var episode = SH.e;
-  var audio = SH.l === 'dub' ? 'dub' : 'sub';
 
   dl.busy = true;
   dl.ctl = new AbortController();
   dlButton(true);
-  dlUi(-2, t('Finding download link') + '…');
-
+  dlUi(-2, t('Finding source') + '…');
   var progress = function (pct, text) { dlUi(pct, t('Downloading') + ' · ' + text); };
+  var stream = null;
+  var directUrl = null;
 
   try {
-    // If no stream or it's an iframe, we need to fetch a direct link
-    if (!stream || stream.type === 'iframe') {
+    var session = activePlayback;
+    if (session && session.currentStream) {
+        stream = session.currentStream;
+    } 
+    
+    if (!stream) {
+        dlUi(-2, t('Fetching source...'));
         var id = getAnimeId(anime);
         if (SH.chain && !hasVid(anime[1])) {
-            var seasonEntry = SH.chain[SH.s - 1];
+            var seasonEntry = SH.chain[season - 1];
             if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
         }
-        if (!id) throw new Error(t('Anime ID not found.'));
-
-        dlUi(-2, t('Finding a downloadable source') + '…');
+        if (!id) throw new Error(t("Anime ID not found."));
         
-        var tempSession = {
-            animeId: id,
-            state: { e: episode, provider: SH.provider || 'auto' },
-            audio: audio
-        };
+        var audio = SH.l === 'dub' ? 'dub' : 'sub';
+        var provider = SH.provider === 'auto' ? STREAM_PROVIDERS[0] : SH.provider;
         
-        stream = await findDownloadableStream(tempSession, dl.ctl.signal);
-        if (!stream) throw new Error(t('No downloadable source found. Try playing first or choose a different provider.'));
+        var streams = await fetchProviderStreams(provider, id, episode, audio);
+        streams = playableSources(streams, provider);
+        
+        if (streams && streams.length > 0) {
+            var directStream = streams.find(function(s) { return s.type === 'video' || s.type === 'hls'; });
+            stream = directStream || streams[0];
+        }
     }
 
+    if (!stream) throw new Error(t('No downloadable source found.'));
+
+    // Iframe বা Embed লিংক হলে সরাসরি ডাউনলোড করা সম্ভব নয়
+    if (stream.type === 'iframe') {
+         directUrl = stream.url;
+         throw new Error(t('This provider uses an embedded player. Direct download is blocked.'));
+    }
+
+    // সরাসরি MP4 বা HLS হলে ডাউনলোড শুরু করবে
     var result;
     if (stream.type === 'hls') {
         result = await downloadHls(stream.url, dl.ctl.signal, progress);
@@ -970,14 +966,24 @@ async function downloadCurrent() {
     saveBlob(result.blob, dlFileName(title, season, episode, result.ext));
     dlUi(100, t('Saved to your Downloads ✓'));
     toast(t('Saved to your Downloads ✓'));
+
   } catch (error) {
-    if (dl.ctl && dl.ctl.signal.aborted) {
+    console.warn('Download Error:', error);
+    
+    // Abort Error হলে চুপচাপ থাকবে (কারণ ইউজার নিজেই বাতিল করেছে)
+    if (error.name === 'AbortError') {
         dlUi(0, t('Download cancelled'), true);
     } else {
         dlUi(0, t('Download failed') + ': ' + error.message, true);
-        console.warn('Download:', error);
-        if (error.message.includes('Opened in new tab')) {
-            toast(t('Server blocked direct download. Opened in new tab!'));
+        
+        // যদি 403 এরর আসে বা iframe হয়, তবে নতুন ট্যাবে ওপেন করার অপশন দেবে
+        var urlToOpen = directUrl || (stream ? stream.url : null);
+        if (urlToOpen) {
+            setTimeout(function() {
+                if (confirm(t("Direct download is blocked by the server (Error 403). Do you want to open the video in a new tab to watch or download?"))) {
+                    window.open(urlToOpen, '_blank');
+                }
+            }, 100);
         }
     }
   } finally {
@@ -1070,7 +1076,6 @@ async function startPlayback(session) {
 
   if (!playerIsCurrent(run)) return;
 
-  // SUB & DUB (Anivexa API) LOGIC
   if (!SH.chainReady) {
     showPlayerMessage('Finding seasons...', String(anime[1]));
     return;
