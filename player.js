@@ -1,7 +1,8 @@
 /* =====================================================
    COMPLETE player.js (Anivexa + YouTube + AnimeSalt)
-   - Added YouTube (Trailer/Full Video via AniList) & AnimeSalt (Web Scraping)
-   - Castle TV & MX Player added but will show error (Requires Backend)
+   - Added Hindi Language Option
+   - Removed Bangla Option
+   - Added YouTube & AnimeSalt Providers
    ===================================================== */
 
 var SH = {};
@@ -9,7 +10,7 @@ var PG = 100;
 
 var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Anivexa API Base
 
-// প্রোভাইডার লিস্টে YouTube এবং AnimeSalt যুক্ত করা হলো
+// প্রোভাইডার লিস্ট
 var STREAM_PROVIDERS = [
   'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves', 
   'youtube', 'animesalt', 'castletv', 'mxplayer'
@@ -71,10 +72,14 @@ function titleKey(title) {
   return String(title || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
+// ================= LANGUAGE SETTINGS =================
 function playerLanguages() {
-  var base = typeof LANGS !== 'undefined' ? LANGS : [['sub', 'Sub'], ['dub', 'Dub']];
-  var out = base.filter(function (item) { return item[0] === 'sub' || item[0] === 'dub'; });
-  return out.length ? out : [['sub', 'Sub'], ['dub', 'Dub']];
+  // Hindi যুক্ত করা হলো, Bangla বাদ দেওয়া হলো
+  var base = typeof LANGS !== 'undefined' ? LANGS : [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
+  var out = base.filter(function (item) { 
+    return item[0] === 'sub' || item[0] === 'dub' || item[0] === 'hindi'; 
+  });
+  return out.length ? out : [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
 }
 
 function stateKey() {
@@ -84,7 +89,6 @@ function stateKey() {
 function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
-
 
 /* ================= SEASON CHAIN ================= */
 var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
@@ -359,7 +363,6 @@ function normalizeStreams(data, base) {
 // ==================== NEW CUSTOM PROVIDERS LOGIC ====================
 
 async function fetchYouTubeStream(anilistId) {
-  // AniList API থেকে ট্রেইলার বা ভিডিও আইডি বের করা
   const query = `query($id:Int){Media(id:$id){trailer{id site}}}`;
   const res = await fetchWithTimeout('https://graphql.anilist.co', {
     method: 'POST',
@@ -376,7 +379,6 @@ async function fetchYouTubeStream(anilistId) {
 }
 
 async function fetchAnimeSaltStream(animeTitle, episode) {
-  // AnimeSalt থেকে ডেটা স্ক্র্যাপ করা (CORS Proxy ব্যবহার করে)
   const proxy = 'https://api.allorigins.win/raw?url=';
   const searchUrl = `https://animesalt.cc/?s=${encodeURIComponent(animeTitle)}`;
   
@@ -385,21 +387,16 @@ async function fetchAnimeSaltStream(animeTitle, episode) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
 
-  // সাইটের HTML স্ট্রাকচার অনুযায়ী সিলেক্টর (এটি ভবিষ্যতে পরিবর্তন হতে পারে)
   const links = Array.from(doc.querySelectorAll('.title a, article a')).map(a => a.href);
   if (links.length === 0) throw new Error("Anime not found on AnimeSalt.");
 
-  // প্রথম লিঙ্কটি নেওয়া হচ্ছে
   const animeUrl = links[0];
-  
-  // এপিসোড পেজে যাওয়া (ধরে নিচ্ছি সাইটে /episode-1/ ফরম্যাটে লিঙ্ক থাকে)
   const epUrl = animeUrl.endsWith('/') ? animeUrl + `episode-${episode}/` : animeUrl + `/episode-${episode}/`;
   
   const epRes = await fetch(proxy + encodeURIComponent(epUrl));
   const epHtml = await epRes.text();
   const epDoc = parser.parseFromString(epHtml, "text/html");
 
-  // iframe বের করা
   const iframe = epDoc.querySelector('iframe');
   if (iframe && iframe.src) {
     return [{ url: iframe.src, type: 'iframe', label: 'AnimeSalt Embed' }];
@@ -410,22 +407,18 @@ async function fetchAnimeSaltStream(animeTitle, episode) {
 async function fetchProviderStreams(provider, anilistId, episode, audio) {
   const animeTitle = ALL[SH.i] ? ALL[SH.i][1] : "Unknown";
 
-  // ১. YouTube প্রোভাইডার
   if (provider === 'youtube') {
     return await fetchYouTubeStream(anilistId);
   }
 
-  // ২. AnimeSalt প্রোভাইডার
   if (provider === 'animesalt') {
     return await fetchAnimeSaltStream(animeTitle, episode);
   }
 
-  // ৩. Castle TV এবং MX Player (ব্যাকএন্ড ছাড়া সম্ভব নয়)
   if (provider === 'castletv' || provider === 'mxplayer') {
     throw new Error(`${provider} requires a Backend Server for decryption. Frontend cannot scrape it.`);
   }
 
-  // ৪. আপনার পুরোনো Anivexa API
   var episodeId = provider + '-' + episode;
   var url = STREAM_API + '/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
   var data = await requestJson(url, false);
@@ -990,7 +983,11 @@ async function downloadCurrent() {
         }
         if (!id) throw new Error(t("Anime ID not found."));
         
-        var audio = SH.l === 'dub' ? 'dub' : 'sub';
+        // হিন্দি সাপোর্ট আপডেট করা হলো
+        var audio = 'sub';
+        if (SH.l === 'dub') audio = 'dub';
+        else if (SH.l === 'hindi') audio = 'hindi';
+        
         var provider = SH.provider === 'auto' ? STREAM_PROVIDERS[0] : SH.provider;
         
         var streams = await fetchProviderStreams(provider, id, episode, audio);
@@ -1148,7 +1145,12 @@ async function startPlayback(session) {
   }
 
   var providers = state.provider === 'auto' ? STREAM_PROVIDERS.slice() : [state.provider];
-  var audio = state.l === 'dub' ? 'dub' : 'sub';
+  
+  // হিন্দি সাপোর্ট আপডেট করা হলো
+  var audio = 'sub';
+  if (state.l === 'dub') audio = 'dub';
+  else if (state.l === 'hindi') audio = 'hindi';
+  
   session.animeId = id;
   session.audio = audio;
 
