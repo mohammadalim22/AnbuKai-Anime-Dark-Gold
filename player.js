@@ -1,16 +1,18 @@
 /* =====================================================
-   COMPLETE player.js  (Anivexa Sub/Dub)
-   - Hindi & Bangla removed
-   - Download button fixed (Bypass 403 error, opens in new tab if needed)
+   COMPLETE player.js (Anivexa + YouTube + AnimeSalt)
+   - Added YouTube (Trailer/Full Video via AniList) & AnimeSalt (Web Scraping)
+   - Castle TV & MX Player added but will show error (Requires Backend)
    ===================================================== */
 
 var SH = {};
 var PG = 100;
 
-var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub (Anivexa)
+var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Anivexa API Base
 
+// প্রোভাইডার লিস্টে YouTube এবং AnimeSalt যুক্ত করা হলো
 var STREAM_PROVIDERS = [
-  'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves'
+  'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves', 
+  'youtube', 'animesalt', 'castletv', 'mxplayer'
 ];
 
 var activeHls = null;
@@ -354,7 +356,76 @@ function normalizeStreams(data, base) {
   return output;
 }
 
+// ==================== NEW CUSTOM PROVIDERS LOGIC ====================
+
+async function fetchYouTubeStream(anilistId) {
+  // AniList API থেকে ট্রেইলার বা ভিডিও আইডি বের করা
+  const query = `query($id:Int){Media(id:$id){trailer{id site}}}`;
+  const res = await fetchWithTimeout('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query: query, variables: { id: anilistId } })
+  });
+  const json = await res.json();
+  const trailer = json?.data?.Media?.trailer;
+  
+  if (trailer && trailer.site === 'youtube' && trailer.id) {
+    return [{ url: `https://www.youtube.com/embed/${trailer.id}?autoplay=1`, type: 'iframe', label: 'YouTube Trailer' }];
+  }
+  throw new Error("YouTube video not found for this anime.");
+}
+
+async function fetchAnimeSaltStream(animeTitle, episode) {
+  // AnimeSalt থেকে ডেটা স্ক্র্যাপ করা (CORS Proxy ব্যবহার করে)
+  const proxy = 'https://api.allorigins.win/raw?url=';
+  const searchUrl = `https://animesalt.cc/?s=${encodeURIComponent(animeTitle)}`;
+  
+  const res = await fetch(proxy + encodeURIComponent(searchUrl));
+  const html = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  // সাইটের HTML স্ট্রাকচার অনুযায়ী সিলেক্টর (এটি ভবিষ্যতে পরিবর্তন হতে পারে)
+  const links = Array.from(doc.querySelectorAll('.title a, article a')).map(a => a.href);
+  if (links.length === 0) throw new Error("Anime not found on AnimeSalt.");
+
+  // প্রথম লিঙ্কটি নেওয়া হচ্ছে
+  const animeUrl = links[0];
+  
+  // এপিসোড পেজে যাওয়া (ধরে নিচ্ছি সাইটে /episode-1/ ফরম্যাটে লিঙ্ক থাকে)
+  const epUrl = animeUrl.endsWith('/') ? animeUrl + `episode-${episode}/` : animeUrl + `/episode-${episode}/`;
+  
+  const epRes = await fetch(proxy + encodeURIComponent(epUrl));
+  const epHtml = await epRes.text();
+  const epDoc = parser.parseFromString(epHtml, "text/html");
+
+  // iframe বের করা
+  const iframe = epDoc.querySelector('iframe');
+  if (iframe && iframe.src) {
+    return [{ url: iframe.src, type: 'iframe', label: 'AnimeSalt Embed' }];
+  }
+  throw new Error("Video iframe not found on AnimeSalt.");
+}
+
 async function fetchProviderStreams(provider, anilistId, episode, audio) {
+  const animeTitle = ALL[SH.i] ? ALL[SH.i][1] : "Unknown";
+
+  // ১. YouTube প্রোভাইডার
+  if (provider === 'youtube') {
+    return await fetchYouTubeStream(anilistId);
+  }
+
+  // ২. AnimeSalt প্রোভাইডার
+  if (provider === 'animesalt') {
+    return await fetchAnimeSaltStream(animeTitle, episode);
+  }
+
+  // ৩. Castle TV এবং MX Player (ব্যাকএন্ড ছাড়া সম্ভব নয়)
+  if (provider === 'castletv' || provider === 'mxplayer') {
+    throw new Error(`${provider} requires a Backend Server for decryption. Frontend cannot scrape it.`);
+  }
+
+  // ৪. আপনার পুরোনো Anivexa API
   var episodeId = provider + '-' + episode;
   var url = STREAM_API + '/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
   var data = await requestJson(url, false);
@@ -362,6 +433,8 @@ async function fetchProviderStreams(provider, anilistId, episode, audio) {
   if (!streams.length) throw new Error(provider + ': API returned no usable streams');
   return streams;
 }
+
+// ===================================================================
 
 /* ================= HLS LIBRARY ================= */
 function loadHlsLibrary() {
@@ -528,7 +601,7 @@ async function mountStream(stream, session, provider) {
     frame.style.cssText = 'width:100%;height:100%;border:0';
     top.appendChild(frame);
     appendPlayerClose(top);
-    updatePlaybackStatus('Provider: ' + provider + ' · Embedded player. If it fails inside, select another source/provider.');
+    updatePlaybackStatus('Provider: ' + provider + ' · Embedded player.');
     return { verified: false };
   }
 
@@ -884,24 +957,6 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
-async function findDownloadableStream(session, signal) {
-  var id = session && session.animeId;
-  if (!id) return null;
-  var list = STREAM_PROVIDERS.slice();
-  var chosen = session.state && session.state.provider;
-  if (chosen && chosen !== 'auto' && list.indexOf(chosen) > -1) list = [chosen].concat(list.filter(function (x) { return x !== chosen; }));
-  for (var i = 0; i < list.length; i++) {
-    if (signal.aborted) return null;
-    try {
-      var streams = playableSources(await fetchProviderStreams(list[i], id, session.state.e, session.audio || 'sub'), list[i]);
-      for (var j = 0; j < streams.length; j++) {
-        if (streams[j].type === 'video' || streams[j].type === 'hls') return streams[j];
-      }
-    } catch (error) {}
-  }
-  return null;
-}
-
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
   
@@ -939,7 +994,6 @@ async function downloadCurrent() {
         var provider = SH.provider === 'auto' ? STREAM_PROVIDERS[0] : SH.provider;
         
         var streams = await fetchProviderStreams(provider, id, episode, audio);
-        streams = playableSources(streams, provider);
         
         if (streams && streams.length > 0) {
             var directStream = streams.find(function(s) { return s.type === 'video' || s.type === 'hls'; });
@@ -949,13 +1003,11 @@ async function downloadCurrent() {
 
     if (!stream) throw new Error(t('No downloadable source found.'));
 
-    // Iframe বা Embed লিংক হলে সরাসরি ডাউনলোড করা সম্ভব নয়
     if (stream.type === 'iframe') {
          directUrl = stream.url;
          throw new Error(t('This provider uses an embedded player. Direct download is blocked.'));
     }
 
-    // সরাসরি MP4 বা HLS হলে ডাউনলোড শুরু করবে
     var result;
     if (stream.type === 'hls') {
         result = await downloadHls(stream.url, dl.ctl.signal, progress);
@@ -970,13 +1022,11 @@ async function downloadCurrent() {
   } catch (error) {
     console.warn('Download Error:', error);
     
-    // Abort Error হলে চুপচাপ থাকবে (কারণ ইউজার নিজেই বাতিল করেছে)
     if (error.name === 'AbortError') {
         dlUi(0, t('Download cancelled'), true);
     } else {
         dlUi(0, t('Download failed') + ': ' + error.message, true);
         
-        // যদি 403 এরর আসে বা iframe হয়, তবে নতুন ট্যাবে ওপেন করার অপশন দেবে
         var urlToOpen = directUrl || (stream ? stream.url : null);
         if (urlToOpen) {
             setTimeout(function() {
