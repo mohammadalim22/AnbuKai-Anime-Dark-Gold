@@ -1,7 +1,6 @@
 /* =====================================================
    COMPLETE player.js (Anivexa + YouTube + AnimeSalt)
-   - Force Hindi Language Option
-   - Added YouTube & AnimeSalt Providers
+   - Hindi language uses only Hindi-capable providers
    ===================================================== */
 
 var SH = {};
@@ -14,6 +13,9 @@ var STREAM_PROVIDERS = [
   'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves', 
   'youtube', 'animesalt', 'castletv', 'mxplayer'
 ];
+
+// Hindi audio দেয় এমন প্রোভাইডার (শুধু এগুলো Hindi তে try হবে)
+var HINDI_PROVIDERS = ['animesalt'];
 
 var activeHls = null;
 var activePlayback = null;
@@ -400,6 +402,11 @@ async function fetchAnimeSaltStream(animeTitle, episode) {
 }
 
 async function fetchProviderStreams(provider, anilistId, episode, audio) {
+  // Hindi হলে শুধু Hindi-capable provider চলবে
+  if (audio === 'hindi' && HINDI_PROVIDERS.indexOf(provider) < 0) {
+    throw new Error(provider + ' has no Hindi audio');
+  }
+
   const animeTitle = ALL[SH.i] ? ALL[SH.i][1] : "Unknown";
 
   if (provider === 'youtube') {
@@ -982,7 +989,9 @@ async function downloadCurrent() {
         if (SH.l === 'dub') audio = 'dub';
         else if (SH.l === 'hindi') audio = 'hindi';
         
-        var provider = SH.provider === 'auto' ? STREAM_PROVIDERS[0] : SH.provider;
+        var provider = SH.provider === 'auto'
+          ? (audio === 'hindi' ? HINDI_PROVIDERS[0] : STREAM_PROVIDERS[0])
+          : SH.provider;
         
         var streams = await fetchProviderStreams(provider, id, episode, audio);
         
@@ -1098,7 +1107,8 @@ async function startPlayback(session) {
   var state = session.state;
   var run = session.run;
 
-  if (state.provider === 'auto') {
+  // Saved (local) videos Hindi তে চলবে না, তাই Hindi হলে skip
+  if (state.provider === 'auto' && state.l !== 'hindi') {
     var staticUrls = [
       vurl(anime[1], state.s, state.e, state.l, state.v),
       vurl(anime[1], state.s, state.e, state.l, 1 - state.v)
@@ -1139,6 +1149,8 @@ async function startPlayback(session) {
   }
 
   var providers = state.provider === 'auto' ? STREAM_PROVIDERS.slice() : [state.provider];
+  // Hindi + Auto হলে শুধু Hindi providers
+  if (state.l === 'hindi' && state.provider === 'auto') providers = HINDI_PROVIDERS.slice();
   
   var audio = 'sub';
   if (state.l === 'dub') audio = 'dub';
@@ -1341,7 +1353,7 @@ function paint(force) {
   }
 
   var providerOptions = '<option value="auto"' + (SH.provider === 'auto' ? ' selected' : '') + '>' + esc(t('Auto · try available providers')) + '</option>';
-  STREAM_PROVIDERS.forEach(function (provider) { providerOptions += '<option value="' + provider + '"' + (SH.provider === provider ? ' selected' : '') + '>' + provider + '</option>'; });
+  (SH.l === 'hindi' ? HINDI_PROVIDERS : STREAM_PROVIDERS).forEach(function (provider) { providerOptions += '<option value="' + provider + '"' + (SH.provider === provider ? ' selected' : '') + '>' + provider + '</option>'; });
   var providerControl = '<label style="display:block;margin:8px 0">' + esc(t('Provider')) + ' <select class="sel" aria-label="Provider" onchange="changePlayerProvider(this.value)">' + providerOptions + '</select></label>';
 
   document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.sTouched=1;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>'; }).join('') + '</div>' + providerControl + seasonInfo + rangeOptions;
