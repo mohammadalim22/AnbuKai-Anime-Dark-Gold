@@ -1,7 +1,6 @@
 /* =====================================================
    COMPLETE player.js (Anivexa + YouTube + AnimeSalt)
-   - Added Hindi Language Option
-   - Removed Bangla Option
+   - Force Hindi Language Option
    - Added YouTube & AnimeSalt Providers
    ===================================================== */
 
@@ -74,12 +73,8 @@ function titleKey(title) {
 
 // ================= LANGUAGE SETTINGS =================
 function playerLanguages() {
-  // Hindi যুক্ত করা হলো, Bangla বাদ দেওয়া হলো
-  var base = typeof LANGS !== 'undefined' ? LANGS : [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
-  var out = base.filter(function (item) { 
-    return item[0] === 'sub' || item[0] === 'dub' || item[0] === 'hindi'; 
-  });
-  return out.length ? out : [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
+  // সরাসরি Sub, Dub এবং Hindi রিটার্ন করবে
+  return [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
 }
 
 function stateKey() {
@@ -983,7 +978,6 @@ async function downloadCurrent() {
         }
         if (!id) throw new Error(t("Anime ID not found."));
         
-        // হিন্দি সাপোর্ট আপডেট করা হলো
         var audio = 'sub';
         if (SH.l === 'dub') audio = 'dub';
         else if (SH.l === 'hindi') audio = 'hindi';
@@ -1146,7 +1140,6 @@ async function startPlayback(session) {
 
   var providers = state.provider === 'auto' ? STREAM_PROVIDERS.slice() : [state.provider];
   
-  // হিন্দি সাপোর্ট আপডেট করা হলো
   var audio = 'sub';
   if (state.l === 'dub') audio = 'dub';
   else if (state.l === 'hindi') audio = 'hindi';
