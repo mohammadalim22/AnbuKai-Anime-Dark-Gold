@@ -15,6 +15,18 @@ var playerRun = 0;
 var playbackKey = '';
 var hlsLibraryPromise = null;
 
+/* ================= ANIME INFO (নিজে লিখে দিন) =================
+   প্রতিটা anime এর কোন season এ কয়টা episode, সেটা এখানে লিখুন।
+   নাম অবশ্যই সাইটে যেভাবে দেখায় ঠিক সেভাবেই লিখতে হবে।
+   ফরম্যাট:  "Anime Name": { seasonNumber: episodeCount, ... }
+   (নিচের সংখ্যাগুলো উদাহরণ, নিজে ঠিক করে নিন)
+   ============================================================== */
+var ANIME_INFO = {
+  "Attack on Titan": { 1: 25, 2: 12, 3: 22, 4: 28 },
+  "Black Clover": { 1: 51, 2: 51, 3: 51, 4: 51 },
+  "ONE PIECE": { 1: 100 }
+};
+
 /* ================= LANGUAGES ================= */
 function playerLanguages() {
   return [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
@@ -62,20 +74,32 @@ function inferStreamType(url, hint) {
   return 'iframe';
 }
 
-// VIDEOS থেকে মোট season সংখ্যা
+// মোট season সংখ্যা: ANIME_INFO > AniList chain / videos.js > 1
 function seasonCount(name) {
+  if (typeof ANIME_INFO !== 'undefined' && ANIME_INFO[name]) {
+    return Math.max.apply(null, Object.keys(ANIME_INFO[name]).map(Number));
+  }
+  var best = 1;
+  if (SH && SH.chain && SH.chain.length) best = Math.max(best, SH.chain.length);
   var item = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   if (item) {
     var nums = Object.keys(item).map(Number).filter(function (n) { return n > 0; });
-    if (nums.length) return Math.max.apply(null, nums);
+    if (nums.length) best = Math.max(best, Math.max.apply(null, nums));
   }
-  return (typeof SEASONS !== 'undefined' && SEASONS[name]) || 1;
+  if (typeof SEASONS !== 'undefined' && SEASONS[name]) best = Math.max(best, SEASONS[name]);
+  return best;
 }
 
-// নির্দিষ্ট season এর মোট episode সংখ্যা
+// নির্দিষ্ট season এর মোট episode সংখ্যা: ANIME_INFO > AniList > EPN > videos.js > 12
 function eN() {
   var anime = ALL[SH.i];
   var name = anime[1];
+  if (typeof ANIME_INFO !== 'undefined' && ANIME_INFO[name] && ANIME_INFO[name][SH.s]) {
+    return ANIME_INFO[name][SH.s];
+  }
+  if (SH.chain && SH.chain[SH.s - 1] && SH.chain[SH.s - 1].episodes > 0) {
+    return SH.chain[SH.s - 1].episodes;
+  }
   if (typeof EPN !== 'undefined' && EPN[name]) return EPN[name];
   var item = typeof VIDEOS !== 'undefined' && VIDEOS[name] && VIDEOS[name][SH.s];
   if (item) {
@@ -91,6 +115,219 @@ function stateKey() {
 
 function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+function getAnimeId(anime) {
+  if (!anime) return null;
+  var values = [anime[10], anime.id];
+  for (var i = 0; i < values.length; i++) {
+    var id = Number(values[i]);
+    if (Number.isInteger(id) && id > 0) return id;
+  }
+  return null;
+}
+
+function titleKey(title) {
+  return String(title || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+async function fetchWithTimeout(url, options) {
+  options = options || {};
+  var controller = new AbortController();
+  var settings = Object.assign({}, options);
+  var timeout = settings.timeout || 18000;
+  delete settings.timeout;
+  settings.signal = controller.signal;
+  var timer = setTimeout(function () { controller.abort(); }, timeout);
+  try { return await fetch(url, settings); } finally { clearTimeout(timer); }
+}
+
+/* ================= SEASON CHAIN (AniList: শুধু Season/Episode তথ্য) =================
+   ভিডিও AniList থেকে আসে না, ভিডিও শুধু আপনার videos.js থেকে।
+   ==================================================================================== */
+var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
+var SEASON_FIELDS = 'id type format episodes status seasonYear startDate{year} title{romaji english} nextAiringEpisode{episode}';
+var SEASON_QUERY = 'query($id:Int){Media(id:$id,type:ANIME){' + SEASON_FIELDS + ' relations{edges{relationType(version:2) node{' + SEASON_FIELDS + '}}}}}';
+var seasonChainCache = new Map();
+var seasonNodeCache = new Map();
+var seasonChainStamp = new Map();
+var titleIdCache = new Map();
+var chainToken = 0;
+var seasonCooldown = 0;
+
+try {
+  var savedChains = JSON.parse(localStorage.getItem('akSeasons2') || '{}');
+  Object.keys(savedChains).forEach(function (key) {
+    var entry = savedChains[key];
+    if (entry && Array.isArray(entry.c) && Date.now() - entry.t < 3 * 864e5) {
+      seasonChainCache.set(Number(key), entry.c);
+      seasonChainStamp.set(Number(key), entry.t);
+    }
+  });
+} catch (error) {}
+
+function saveSeasonChains() {
+  try {
+    if (seasonChainCache.size > 200) return;
+    var out = {};
+    seasonChainCache.forEach(function (chain, key) { out[key] = { t: seasonChainStamp.get(key) || Date.now(), c: chain }; });
+    localStorage.setItem('akSeasons2', JSON.stringify(out));
+  } catch (error) {}
+}
+
+function anilistBusy() {
+  return Date.now() < Math.max(seasonCooldown, window.akBlockUntil || 0);
+}
+
+function fetchSeasonNode(id) {
+  if (seasonNodeCache.has(id)) return seasonNodeCache.get(id);
+  if (anilistBusy()) return Promise.reject(new Error('AniList busy'));
+  var promise = fetchWithTimeout('https://graphql.anilist.co', {
+    method: 'POST',
+    timeout: 8000,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query: SEASON_QUERY, variables: { id: id } })
+  }).then(function (response) {
+    if (response.status === 429) seasonCooldown = Date.now() + 60000;
+    if (!response.ok) throw new Error('AniList HTTP ' + response.status);
+    return response.json();
+  }).then(function (json) {
+    if (!json || !json.data || !json.data.Media) throw new Error('AniList: no data');
+    return json.data.Media;
+  });
+  seasonNodeCache.set(id, promise);
+  promise.catch(function () { seasonNodeCache.delete(id); });
+  return promise;
+}
+
+function seasonYearOf(node) {
+  return node.seasonYear || (node.startDate && node.startDate.year) || 9999;
+}
+
+function seasonSummary(node) {
+  var episodes = node.episodes || (node.nextAiringEpisode ? node.nextAiringEpisode.episode - 1 : 0) || 0;
+  return {
+    id: node.id,
+    title: (node.title && (node.title.english || node.title.romaji)) || '',
+    episodes: episodes,
+    year: node.seasonYear || (node.startDate && node.startDate.year) || 0
+  };
+}
+
+function seasonRelations(node, type, seen, latestFirst) {
+  var edges = (node && node.relations && node.relations.edges) || [];
+  return edges.filter(function (edge) {
+    var n = edge && edge.node;
+    return edge.relationType === type && n && n.type === 'ANIME' && SEASON_FORMATS.test(n.format || '') && !seen.has(n.id);
+  }).map(function (edge) { return edge.node; }).sort(function (a, b) {
+    var fa = a.format === 'TV' ? 0 : 1;
+    var fb = b.format === 'TV' ? 0 : 1;
+    if (fa !== fb) return fa - fb;
+    return latestFirst ? seasonYearOf(b) - seasonYearOf(a) : seasonYearOf(a) - seasonYearOf(b);
+  });
+}
+
+async function buildSeasonChain(baseId, getNode) {
+  var base = await getNode(baseId);
+  if (!base || !SEASON_FORMATS.test(base.format || '')) return { chain: [seasonSummary(base)], complete: true };
+
+  var seen = new Set([base.id]);
+  var before = [];
+  var after = [];
+  var complete = true;
+  var cur = base;
+  var hop;
+
+  for (hop = 0; hop < 8; hop++) {
+    var prev = seasonRelations(cur, 'PREQUEL', seen, true)[0];
+    if (!prev) break;
+    seen.add(prev.id);
+    before.unshift(seasonSummary(prev));
+    try { cur = await getNode(prev.id); } catch (error) { complete = false; break; }
+  }
+
+  cur = base;
+  for (hop = 0; hop < 8; hop++) {
+    var next = seasonRelations(cur, 'SEQUEL', seen, false)[0];
+    if (!next) break;
+    seen.add(next.id);
+    after.push(seasonSummary(next));
+    try { cur = await getNode(next.id); } catch (error) { complete = false; break; }
+  }
+
+  return { chain: before.concat([seasonSummary(base)], after), complete: complete };
+}
+
+async function loadSeasonChain(baseId) {
+  var cached = seasonChainCache.get(baseId);
+  if (cached) return cached;
+  var result = await buildSeasonChain(baseId, fetchSeasonNode);
+  if (result.complete) {
+    result.chain.forEach(function (item) { seasonChainCache.set(item.id, result.chain); seasonChainStamp.set(item.id, Date.now()); });
+    saveSeasonChains();
+  }
+  return result.chain;
+}
+
+function applySeasonChain(token, chain, baseId) {
+  if (!SH || SH.chainTok !== token) return;
+  var index = -1;
+  if (Array.isArray(chain)) {
+    for (var i = 0; i < chain.length; i++) { if (chain[i].id === baseId) { index = i; break; } }
+  }
+  if (index < 0) {
+    var current = typeof ALL !== 'undefined' ? ALL[SH.i] : null;
+    var name = current ? String(current[1]) : '';
+    var match = name.match(/(?:season|part|cour)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+season/i);
+    chain = [{ id: baseId, title: name, episodes: 0, year: 0, num: match ? Number(match[1] || match[2]) : 0 }];
+    index = 0;
+  }
+  SH.chain = chain;
+  SH.chainReady = true;
+  SH.baseS = index + 1;
+  if (!SH.sTouched) SH.s = index + 1;
+  if (SH.play) paint(true); else paint();
+}
+
+async function resolveAnimeIdByTitle(title) {
+  var key = titleKey(title);
+  if (!key) return null;
+  if (titleIdCache.has(key)) return titleIdCache.get(key);
+  if (anilistBusy()) return null;
+  try {
+    var response = await fetchWithTimeout('https://graphql.anilist.co', {
+      method: 'POST',
+      timeout: 8000,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: 'query($s:String){Media(search:$s,type:ANIME,sort:SEARCH_MATCH){id}}', variables: { s: String(title) } })
+    });
+    if (response.status === 429) { seasonCooldown = Date.now() + 60000; return null; }
+    var json = await response.json();
+    var found = json && json.data && json.data.Media && json.data.Media.id;
+    if (found) { titleIdCache.set(key, found); return found; }
+  } catch (error) {}
+  return null;
+}
+
+function startSeasonChainByTitle(anime) {
+  var token = ++chainToken;
+  SH.chainTok = token;
+  resolveAnimeIdByTitle(anime[1]).then(function (found) {
+    if (!SH || SH.chainTok !== token) return;
+    if (found) { anime[10] = found; startSeasonChain(found); } else { applySeasonChain(token, null, null); }
+  });
+}
+
+function startSeasonChain(baseId) {
+  var token = ++chainToken;
+  SH.chainTok = token;
+  var cached = seasonChainCache.get(baseId);
+  if (cached) { applySeasonChain(token, cached, baseId); return; }
+  var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 9000); });
+  Promise.race([loadSeasonChain(baseId), timeout]).then(
+    function (chain) { applySeasonChain(token, chain, baseId); },
+    function () { applySeasonChain(token, null, baseId); }
+  );
 }
 
 /* ================= HLS LIBRARY (লোকাল ফাইল) ================= */
@@ -800,7 +1037,7 @@ function openSheet(index) {
 
   var language = (preferences.lang === 'dub' || preferences.lang === 'hindi') ? preferences.lang : 'sub';
 
-  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, src: null, play: 0, pg: 0 };
+  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
 
   var banner = anime[4] || anime[3];
   var background = banner ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(banner) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + color + ',.5),transparent 70%),#0c0c14';
@@ -827,6 +1064,10 @@ function openSheet(index) {
   var overlay = document.getElementById('ov');
   if (overlay) overlay.classList.add('on');
   document.body.style.overflow = 'hidden';
+
+  // AniList থেকে শুধু Season/Episode তথ্য আনা (ভিডিও নয়)
+  var baseAnimeId = getAnimeId(anime);
+  if (baseAnimeId) startSeasonChain(baseAnimeId); else startSeasonChainByTitle(anime);
 
   paint();
   warmHlsLibrary();
@@ -895,7 +1136,13 @@ function paint(force) {
 
   var seasonOptions = '';
   for (var s = 1; s <= seasons; s++) {
-    seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>' + esc(t('Season {n}', { n: s })) + '</option>';
+    var seasonEntry = SH.chain ? SH.chain[s - 1] : null;
+    var seasonLabel = (seasonEntry && seasonEntry.num) || s;
+    seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>' + esc(t('Season {n}', { n: seasonLabel })) + '</option>';
+  }
+  var seasonInfo = '';
+  if (SH.chain && SH.chain[SH.s - 1] && SH.chain[SH.s - 1].title) {
+    seasonInfo = '<small class="mu" style="display:block;width:100%;margin:2px 0 6px">' + esc(SH.chain[SH.s - 1].title) + '</small>';
   }
 
   var rangeOptions = '';
@@ -912,6 +1159,7 @@ function paint(force) {
   document.getElementById('ctl').innerHTML =
     '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select>'
     + '<div class="seg">' + langButtons + '</div>'
+    + seasonInfo
     + rangeOptions;
 
   var episodeButtons = '';
