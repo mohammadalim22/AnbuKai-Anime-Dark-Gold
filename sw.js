@@ -1,55 +1,57 @@
-const CACHE_NAME = 'anbukai-v2'; // v1 থেকে v2 করা হলো যাতে ক্যাশ ক্লিয়ার হয়
+/* =====================================================
+   sw.js  (Network-First)
+   - নতুন ফাইল সবসময় আগে নেট থেকে আনবে (পুরনো cache আটকে থাকবে না)
+   - নেট না থাকলে cache থেকে চালাবে
+   ===================================================== */
+
+// প্রতিবার বড় পরিবর্তন করলে এই নাম্বার বাড়ান (v3 -> v4 ...)
+const CACHE_NAME = 'anbukai-v3';
+
+// Relative path, তাই GitHub Pages এর যেকোনো folder এ কাজ করবে
 const ASSETS = [
-  '/AnbuKai-Anime-Dark-Gold/',
-  '/AnbuKai-Anime-Dark-Gold/index.html',
-  '/AnbuKai-Anime-Dark-Gold/style.css',
-  '/AnbuKai-Anime-Dark-Gold/hero.css',
-  '/AnbuKai-Anime-Dark-Gold/animations.css',
-  '/AnbuKai-Anime-Dark-Gold/player.js', // player.js যুক্ত করা হলো
-  '/AnbuKai-Anime-Dark-Gold/data.js'    // data.js যুক্ত করা হলো
+  './',
+  './index.html',
+  './style.css',
+  './hero.css',
+  './animations.css',
+  './profile.css',
+  './player.js',
+  './data.js',
+  './videos.js'
 ];
 
-// ফাইলগুলো ক্যাশ মেমোরিতে সেভ করা
 self.addEventListener('install', (e) => {
-  self.skipWaiting(); // নতুন সার্ভিস ওয়ার্কার সাথে সাথে অ্যাক্টিভ হবে
+  self.skipWaiting();
   e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) =>
+      // একটা ফাইল না পেলেও install আটকাবে না
+      Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {})))
+    )
   );
 });
 
-// পুরোনো ক্যাশ ডিলিট করা (এটি খুবই জরুরি)
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches.keys().then((names) =>
+      Promise.all(names.map((name) => (name !== CACHE_NAME ? caches.delete(name) : null)))
+    ).then(() => self.clients.claim())
   );
 });
 
-// ইন্টারনেট ছাড়াই ক্যাশ থেকে ফাইল লোড করা
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) {
-    return;
-  }
+  const req = e.request;
+  if (req.method !== 'GET' || !req.url.startsWith(self.location.origin)) return;
+
+  // Network first: আগে নেট, ব্যর্থ হলে cache
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-      return fetch(e.request).then((response) => {
-        return caches.open(CACHE_NAME).then((cache) => {
-          if (response.status === 200) {
-            cache.put(e.request, response.clone());
-          }
-          return response;
-        });
-      });
-    })
+    fetch(req, { cache: 'no-cache' })
+      .then((response) => {
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(req))
   );
 });
