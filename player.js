@@ -1,16 +1,18 @@
 /* =====================================================
-   COMPLETE player.js  (Anivexa Sub/Dub)
-   - Hindi & Bangla removed
-   - Download button fixed (Bypass 403 error, opens in new tab if needed)
+   COMPLETE player.js (CloudStream/Consumet API Integrated)
+   - Replaced Anivexa API with Consumet API (GogoAnime/Zoro)
+   - Kept your original HLS, Download, and UI logic intact
    ===================================================== */
 
 var SH = {};
 var PG = 100;
 
-var STREAM_API = 'https://anivexa-api-wi89.onrender.com'; // Sub & Dub (Anivexa)
+// Consumet API acts as our CloudStream provider in web
+var CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+var CONSUMET_API = 'https://api.consumet.org';
 
 var STREAM_PROVIDERS = [
-  'anikoto', 'reanime', 'kaa', 'senshi', 'anizone', 'aniwaves'
+  'gogoanime', 'zoro' // CloudStream style providers
 ];
 
 var activeHls = null;
@@ -51,7 +53,7 @@ function getAnimeId(anime) {
 function safeStreamUrl(value, base) {
   if (typeof value !== 'string' || !value.trim()) return '';
   try {
-    var url = new URL(value, base || STREAM_API + '/');
+    var url = new URL(value, base || CONSUMET_API + '/');
     return /^https?:$/.test(url.protocol) ? url.href : '';
   } catch (error) { return ''; }
 }
@@ -82,7 +84,6 @@ function stateKey() {
 function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
-
 
 /* ================= SEASON CHAIN ================= */
 var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
@@ -354,13 +355,61 @@ function normalizeStreams(data, base) {
   return output;
 }
 
+/* ================= NEW CONSUMET/CLOUDSTREAM FETCHER ================= */
+
 async function fetchProviderStreams(provider, anilistId, episode, audio) {
-  var episodeId = provider + '-' + episode;
-  var url = STREAM_API + '/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
-  var data = await requestJson(url, false);
-  var streams = normalizeStreams(data, STREAM_API + '/');
-  if (!streams.length) throw new Error(provider + ': API returned no usable streams');
-  return streams;
+  // Using Consumet API (Open-source CloudStream alternative for Web)
+  try {
+    // 1. Get episode list from Consumet AniList
+    const infoUrl = `${CORS_PROXY}${encodeURIComponent(CONSUMET_API + '/meta/anilist/info/' + anilistId)}`;
+    const infoRes = await fetch(infoUrl);
+    const infoData = await infoRes.json();
+    
+    if (!infoData || !infoData.episodes) throw new Error("No episodes found on Consumet");
+    
+    let ep = infoData.episodes.find(e => e.number === Number(episode));
+    if (!ep) ep = infoData.episodes[Number(episode) - 1]; // Fallback
+    if (!ep) throw new Error("Episode not found on Consumet");
+
+    // 2. Fetch stream using the episode ID
+    const watchUrl = `${CORS_PROXY}${encodeURIComponent(CONSUMET_API + '/meta/anilist/watch/' + ep.id)}`;
+    const watchRes = await fetch(watchUrl);
+    const watchData = await watchRes.json();
+
+    if (!watchData || !watchData.sources) throw new Error("No streams found from Consumet");
+    
+    // 3. Format for your player
+    let streams = watchData.sources.map((s, i) => {
+        return {
+            url: s.url,
+            type: s.isM3U8 ? 'hls' : 'video',
+            specialHls: false,
+            label: `Source ${i + 1} (${s.quality || 'Auto'})`
+        };
+    });
+    
+    if (watchData.download) {
+        streams.push({
+            url: watchData.download,
+            type: 'video',
+            specialHls: false,
+            label: 'Download Link'
+        });
+    }
+
+    if (streams.length === 0) throw new Error(provider + ': API returned no usable streams');
+    return streams;
+
+  } catch (error) {
+    console.warn("Consumet API failed, falling back to user's original API:", error.message);
+    // Fallback to user's original Anivexa API if Consumet fails
+    var episodeId = provider + '-' + episode;
+    var url = 'https://anivexa-api-wi89.onrender.com/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
+    var data = await requestJson(url, false);
+    var streams = normalizeStreams(data, 'https://anivexa-api-wi89.onrender.com/');
+    if (!streams.length) throw new Error(provider + ': API returned no usable streams');
+    return streams;
+  }
 }
 
 /* ================= HLS LIBRARY ================= */
@@ -949,13 +998,11 @@ async function downloadCurrent() {
 
     if (!stream) throw new Error(t('No downloadable source found.'));
 
-    // Iframe বা Embed লিংক হলে সরাসরি ডাউনলোড করা সম্ভব নয়
     if (stream.type === 'iframe') {
          directUrl = stream.url;
          throw new Error(t('This provider uses an embedded player. Direct download is blocked.'));
     }
 
-    // সরাসরি MP4 বা HLS হলে ডাউনলোড শুরু করবে
     var result;
     if (stream.type === 'hls') {
         result = await downloadHls(stream.url, dl.ctl.signal, progress);
@@ -970,13 +1017,11 @@ async function downloadCurrent() {
   } catch (error) {
     console.warn('Download Error:', error);
     
-    // Abort Error হলে চুপচাপ থাকবে (কারণ ইউজার নিজেই বাতিল করেছে)
     if (error.name === 'AbortError') {
         dlUi(0, t('Download cancelled'), true);
     } else {
         dlUi(0, t('Download failed') + ': ' + error.message, true);
         
-        // যদি 403 এরর আসে বা iframe হয়, তবে নতুন ট্যাবে ওপেন করার অপশন দেবে
         var urlToOpen = directUrl || (stream ? stream.url : null);
         if (urlToOpen) {
             setTimeout(function() {
