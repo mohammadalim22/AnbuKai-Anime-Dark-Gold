@@ -38,6 +38,33 @@ function langLabel(code) {
   return code;
 }
 
+/* ================= SERVERS (মোট ৭টা) =================
+   videos.js এ প্রতিটা language এর লিংক এই ক্রমে দিতে হবে:
+   [0] FileMoon, [1] VidMoly, [2] LuluStream, [3] Voe,
+   [4] MixDrop, [5] Streamtape, [6] DoodStream
+   (যে server এ লিংক নেই সেখানে "" লিখুন)
+   ====================================================== */
+var SERVERS = [
+  'Server 01', // FileMoon
+  'Server 02', // VidMoly
+  'Server 03', // LuluStream
+  'Server 04', // Voe
+  'Server 05', // MixDrop
+  'Server 06', // Streamtape
+  'Server 07'  // DoodStream
+];
+
+function serverHasVideo(name, season, episode, language, index) {
+  return !!safeStreamUrl(vurl(name, season, episode, language, index));
+}
+
+function firstServerWithVideo(name, season, episode, language) {
+  for (var i = 0; i < SERVERS.length; i++) {
+    if (serverHasVideo(name, season, episode, language, i)) return i;
+  }
+  return -1;
+}
+
 /* ================= DATA HELPERS ================= */
 function hasVid(name) {
   var item = typeof VIDEOS !== 'undefined' && VIDEOS[name];
@@ -876,7 +903,7 @@ async function downloadCurrent() {
     if (session && session.currentStream) {
       stream = session.currentStream;
     } else {
-      var url = safeStreamUrl(vurl(title, season, episode, SH.l, SH.v) || vurl(title, season, episode, SH.l, 1 - SH.v));
+      var url = safeStreamUrl(vurl(title, season, episode, SH.l, SH.v));
       if (url) stream = { url: url, type: inferStreamType(url) };
     }
 
@@ -970,10 +997,7 @@ async function startPlayback(session) {
   var state = session.state;
   var run = session.run;
 
-  var urls = [
-    vurl(anime[1], state.s, state.e, state.l, state.v),
-    vurl(anime[1], state.s, state.e, state.l, 1 - state.v)
-  ];
+  var urls = [vurl(anime[1], state.s, state.e, state.l, state.v)];
 
   var seen = new Set();
   var streams = [];
@@ -1037,7 +1061,7 @@ function openSheet(index) {
 
   var language = (preferences.lang === 'dub' || preferences.lang === 'hindi') ? preferences.lang : 'sub';
 
-  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
+  SH = { i: index, s: 1, e: 1, l: language, v: (Number(preferences.srv) >= 0 && Number(preferences.srv) < SERVERS.length) ? Number(preferences.srv) : 0, src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
 
   var banner = anime[4] || anime[3];
   var background = banner ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(banner) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + color + ',.5),transparent 70%),#0c0c14';
@@ -1105,6 +1129,19 @@ function changePlayerLanguage(index) {
   paint(true);
 }
 
+// Server button চাপলে
+function changePlayerServer(index) {
+  var anime = ALL[SH.i];
+  if (!anime || index < 0 || index >= SERVERS.length) return;
+  if (!serverHasVideo(anime[1], SH.s, SH.e, SH.l, index)) {
+    toast(t('{s}: no video for this episode', { s: SERVERS[index] }));
+    return;
+  }
+  SH.v = index;
+  SH.src = null;
+  paint(true);
+}
+
 // পুরনো কোড কোথাও কল করলে যেন error না হয়
 function changePlayerProvider() { return; }
 
@@ -1132,6 +1169,12 @@ function paint(force) {
     return;
   }
 
+  // বর্তমান server এ ভিডিও না থাকলে প্রথম যে server এ আছে সেটায় যাবে
+  if (!serverHasVideo(anime[1], SH.s, SH.e, SH.l, SH.v)) {
+    var altServer = firstServerWithVideo(anime[1], SH.s, SH.e, SH.l);
+    if (altServer !== -1) SH.v = altServer;
+  }
+
   var needsPlayback = force === true || stateKey() !== playbackKey;
 
   var seasonOptions = '';
@@ -1156,9 +1199,16 @@ function paint(force) {
     return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>';
   }).join('');
 
+  // Server 01 ... Server 07
+  var serverButtons = SERVERS.map(function (label, index) {
+    var has = serverHasVideo(anime[1], SH.s, SH.e, SH.l, index);
+    return '<button class="' + (index === SH.v ? 'on' : '') + '"' + (has ? '' : ' style="opacity:.4"') + ' onclick="changePlayerServer(' + index + ')">' + esc(t(label)) + '</button>';
+  }).join('');
+
   document.getElementById('ctl').innerHTML =
     '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select>'
     + '<div class="seg">' + langButtons + '</div>'
+    + '<div class="seg" style="display:flex;flex-wrap:wrap;width:100%;margin:8px 0;border-radius:20px">' + serverButtons + '</div>'
     + seasonInfo
     + rangeOptions;
 
