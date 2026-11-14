@@ -1,19 +1,13 @@
 /* =====================================================
-   COMPLETE player.js (CloudStream/Consumet API Integrated)
-   - Replaced Anivexa API with Consumet API (GogoAnime/Zoro)
-   - Kept your original HLS, Download, and UI logic intact
+   player.js  (100% Self-Hosted)
+   - কোনো third-party API / scraper / AniList নেই
+   - ভিডিও শুধু আপনার নিজের VIDEOS ডেটা (videos.js) থেকে চলবে
+   - Language: Sub | Dub | Hindi
+   - HLS দরকার হলে লোকাল 'hls.min.js' ফাইল ব্যবহার হবে
    ===================================================== */
 
 var SH = {};
 var PG = 100;
-
-// Consumet API acts as our CloudStream provider in web
-var CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-var CONSUMET_API = 'https://api.consumet.org';
-
-var STREAM_PROVIDERS = [
-  'gogoanime', 'zoro' // CloudStream style providers
-];
 
 var activeHls = null;
 var activePlayback = null;
@@ -21,13 +15,24 @@ var playerRun = 0;
 var playbackKey = '';
 var hlsLibraryPromise = null;
 
-/* ================= DATA HELPERS ================= */
+/* ================= LANGUAGES ================= */
+function playerLanguages() {
+  return [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
+}
 
+function langLabel(code) {
+  var list = playerLanguages();
+  for (var i = 0; i < list.length; i++) { if (list[i][0] === code) return list[i][1]; }
+  return code;
+}
+
+/* ================= DATA HELPERS ================= */
 function hasVid(name) {
   var item = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   return !!item && Object.keys(item).length > 0;
 }
 
+// VIDEOS[name][season][episode][language][server]
 function vurl(name, season, episode, language, server) {
   var anime = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   var item = anime && anime[season] && anime[season][episode] && anime[season][episode][language];
@@ -40,20 +45,10 @@ function cu(url) {
   });
 }
 
-function getAnimeId(anime) {
-  if (!anime) return null;
-  var values = [anime[10], anime.id];
-  for (var i = 0; i < values.length; i++) {
-    var id = Number(values[i]);
-    if (Number.isInteger(id) && id > 0) return id;
-  }
-  return null;
-}
-
-function safeStreamUrl(value, base) {
+function safeStreamUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return '';
   try {
-    var url = new URL(value, base || CONSUMET_API + '/');
+    var url = new URL(value, window.location.href);
     return /^https?:$/.test(url.protocol) ? url.href : '';
   } catch (error) { return ''; }
 }
@@ -63,356 +58,44 @@ function inferStreamType(url, hint) {
   if (/\.m3u8(?:[?#]|$)/i.test(url)) return 'hls';
   if (hint === 'iframe' || hint === 'embed') return 'iframe';
   if (/hls|mpegurl/.test(hint)) return 'hls';
-  if (hint === 'video' || hint.indexOf('video/') === 0 || /\.(mp4|webm|ogg)(?:[?#]|$)/i.test(url)) return 'video';
+  if (hint === 'video' || hint.indexOf('video/') === 0 || /\.(mp4|webm|ogg|mkv)(?:[?#]|$)/i.test(url)) return 'video';
   return 'iframe';
 }
 
-function titleKey(title) {
-  return String(title || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+// VIDEOS থেকে মোট season সংখ্যা
+function seasonCount(name) {
+  var item = typeof VIDEOS !== 'undefined' && VIDEOS[name];
+  if (item) {
+    var nums = Object.keys(item).map(Number).filter(function (n) { return n > 0; });
+    if (nums.length) return Math.max.apply(null, nums);
+  }
+  return (typeof SEASONS !== 'undefined' && SEASONS[name]) || 1;
 }
 
-function playerLanguages() {
-  var base = typeof LANGS !== 'undefined' ? LANGS : [['sub', 'Sub'], ['dub', 'Dub']];
-  var out = base.filter(function (item) { return item[0] === 'sub' || item[0] === 'dub'; });
-  return out.length ? out : [['sub', 'Sub'], ['dub', 'Dub']];
+// নির্দিষ্ট season এর মোট episode সংখ্যা
+function eN() {
+  var anime = ALL[SH.i];
+  var name = anime[1];
+  if (typeof EPN !== 'undefined' && EPN[name]) return EPN[name];
+  var item = typeof VIDEOS !== 'undefined' && VIDEOS[name] && VIDEOS[name][SH.s];
+  if (item) {
+    var nums = Object.keys(item).map(Number).filter(function (n) { return n > 0; });
+    if (nums.length) return Math.max.apply(null, nums);
+  }
+  return 12;
 }
 
 function stateKey() {
-  return [SH.i, SH.s, SH.e, SH.l, SH.provider || 'auto', SH.src === null ? 'auto' : SH.src, SH.v].join('|');
+  return [SH.i, SH.s, SH.e, SH.l, SH.src === null ? 'auto' : SH.src, SH.v].join('|');
 }
 
 function wait(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-/* ================= SEASON CHAIN ================= */
-var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
-var SEASON_FIELDS = 'id type format episodes status seasonYear startDate{year} title{romaji english} nextAiringEpisode{episode}';
-var SEASON_QUERY = 'query($id:Int){Media(id:$id,type:ANIME){' + SEASON_FIELDS + ' relations{edges{relationType(version:2) node{' + SEASON_FIELDS + '}}}}}';
-var seasonChainCache = new Map();
-var seasonNodeCache = new Map();
-var chainToken = 0;
-
-var seasonChainStamp = new Map();
-var seasonCooldown = 0;
-var titleIdCache = new Map();
-
-try {
-  var savedChains = JSON.parse(localStorage.getItem('akSeasons2') || '{}');
-  Object.keys(savedChains).forEach(function (key) {
-    var entry = savedChains[key];
-    if (entry && Array.isArray(entry.c) && Date.now() - entry.t < 3 * 864e5) {
-      seasonChainCache.set(Number(key), entry.c);
-      seasonChainStamp.set(Number(key), entry.t);
-    }
-  });
-} catch (error) {}
-
-function saveSeasonChains() {
-  try {
-    if (seasonChainCache.size > 200) return;
-    var out = {};
-    seasonChainCache.forEach(function (chain, key) { out[key] = { t: seasonChainStamp.get(key) || Date.now(), c: chain }; });
-    localStorage.setItem('akSeasons2', JSON.stringify(out));
-  } catch (error) {}
-}
-
-function anilistBusy() {
-  return Date.now() < Math.max(seasonCooldown, window.akBlockUntil || 0);
-}
-
-function fetchSeasonNode(id) {
-  if (seasonNodeCache.has(id)) return seasonNodeCache.get(id);
-  if (anilistBusy()) return Promise.reject(new Error('AniList busy'));
-  var promise = fetchWithTimeout('https://graphql.anilist.co', {
-    method: 'POST',
-    timeout: 8000,
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query: SEASON_QUERY, variables: { id: id } })
-  }).then(function (response) {
-    if (response.status === 429) seasonCooldown = Date.now() + 60000;
-    if (!response.ok) throw new Error('AniList HTTP ' + response.status);
-    return response.json();
-  }).then(function (json) {
-    if (!json || !json.data || !json.data.Media) throw new Error('AniList: no data');
-    return json.data.Media;
-  });
-  seasonNodeCache.set(id, promise);
-  promise.catch(function () { seasonNodeCache.delete(id); });
-  return promise;
-}
-
-function seasonYearOf(node) {
-  return node.seasonYear || (node.startDate && node.startDate.year) || 9999;
-}
-
-function seasonSummary(node) {
-  var episodes = node.episodes || (node.nextAiringEpisode ? node.nextAiringEpisode.episode - 1 : 0) || 0;
-  return {
-    id: node.id,
-    title: (node.title && (node.title.english || node.title.romaji)) || '',
-    episodes: episodes,
-    year: node.seasonYear || (node.startDate && node.startDate.year) || 0
-  };
-}
-
-function seasonRelations(node, type, seen, latestFirst) {
-  var edges = (node && node.relations && node.relations.edges) || [];
-  return edges.filter(function (edge) {
-    var n = edge && edge.node;
-    return edge.relationType === type && n && n.type === 'ANIME' && SEASON_FORMATS.test(n.format || '') && !seen.has(n.id);
-  }).map(function (edge) { return edge.node; }).sort(function (a, b) {
-    var fa = a.format === 'TV' ? 0 : 1;
-    var fb = b.format === 'TV' ? 0 : 1;
-    if (fa !== fb) return fa - fb;
-    return latestFirst ? seasonYearOf(b) - seasonYearOf(a) : seasonYearOf(a) - seasonYearOf(b);
-  });
-}
-
-async function buildSeasonChain(baseId, getNode) {
-  var base = await getNode(baseId);
-  if (!base || !SEASON_FORMATS.test(base.format || '')) return { chain: [seasonSummary(base)], complete: true };
-
-  var seen = new Set([base.id]);
-  var before = [];
-  var after = [];
-  var complete = true;
-  var cur = base;
-  var hop;
-
-  for (hop = 0; hop < 8; hop++) {
-    var prev = seasonRelations(cur, 'PREQUEL', seen, true)[0];
-    if (!prev) break;
-    seen.add(prev.id);
-    before.unshift(seasonSummary(prev));
-    try { cur = await getNode(prev.id); } catch (error) { complete = false; break; }
-  }
-
-  cur = base;
-  for (hop = 0; hop < 8; hop++) {
-    var next = seasonRelations(cur, 'SEQUEL', seen, false)[0];
-    if (!next) break;
-    seen.add(next.id);
-    after.push(seasonSummary(next));
-    try { cur = await getNode(next.id); } catch (error) { complete = false; break; }
-  }
-
-  return { chain: before.concat([seasonSummary(base)], after), complete: complete };
-}
-
-async function loadSeasonChain(baseId) {
-  var cached = seasonChainCache.get(baseId);
-  if (cached) return cached;
-  var result = await buildSeasonChain(baseId, fetchSeasonNode);
-  if (result.complete) {
-    result.chain.forEach(function (item) { seasonChainCache.set(item.id, result.chain); seasonChainStamp.set(item.id, Date.now()); });
-    saveSeasonChains();
-  }
-  return result.chain;
-}
-
-function applySeasonChain(token, chain, baseId) {
-  if (!SH || SH.chainTok !== token) return;
-  var index = -1;
-  if (Array.isArray(chain)) {
-    for (var i = 0; i < chain.length; i++) { if (chain[i].id === baseId) { index = i; break; } }
-  }
-  if (index < 0) {
-    var current = typeof ALL !== 'undefined' ? ALL[SH.i] : null;
-    var name = current ? String(current[1]) : '';
-    var match = name.match(/(?:season|part|cour)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+season/i);
-    chain = [{ id: baseId, title: name, episodes: 0, year: 0, num: match ? Number(match[1] || match[2]) : 0 }];
-    index = 0;
-  }
-  SH.chain = chain;
-  SH.chainReady = true;
-  SH.baseS = index + 1;
-  if (!SH.sTouched) SH.s = index + 1;
-  if (SH.play) paint(true); else paint();
-}
-
-async function resolveAnimeIdByTitle(title) {
-  var key = titleKey(title);
-  if (!key) return null;
-  if (titleIdCache.has(key)) return titleIdCache.get(key);
-  if (anilistBusy()) return null;
-  try {
-    var response = await fetchWithTimeout('https://graphql.anilist.co', {
-      method: 'POST',
-      timeout: 8000,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ query: 'query($s:String){Media(search:$s,type:ANIME,sort:SEARCH_MATCH){id}}', variables: { s: String(title) } })
-    });
-    if (response.status === 429) { seasonCooldown = Date.now() + 60000; return null; }
-    var json = await response.json();
-    var found = json && json.data && json.data.Media && json.data.Media.id;
-    if (found) { titleIdCache.set(key, found); return found; }
-  } catch (error) {}
-  return null;
-}
-
-function startSeasonChainByTitle(anime) {
-  var token = ++chainToken;
-  SH.chainTok = token;
-  resolveAnimeIdByTitle(anime[1]).then(function (found) {
-    if (!SH || SH.chainTok !== token) return;
-    if (found) { anime[10] = found; startSeasonChain(found); } else { applySeasonChain(token, null, null); }
-  });
-}
-
-function startSeasonChain(baseId) {
-  var token = ++chainToken;
-  SH.chainTok = token;
-  var cached = seasonChainCache.get(baseId);
-  if (cached) { applySeasonChain(token, cached, baseId); return; }
-  var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 9000); });
-  Promise.race([loadSeasonChain(baseId), timeout]).then(
-    function (chain) { applySeasonChain(token, chain, baseId); },
-    function () { applySeasonChain(token, null, baseId); }
-  );
-}
-
-/* ================= NETWORK ================= */
-
-async function fetchWithTimeout(url, options) {
-  options = options || {};
-  var controller = new AbortController();
-  var settings = Object.assign({}, options);
-  var timeout = settings.timeout || 18000;
-  delete settings.timeout;
-  settings.signal = controller.signal;
-  var timer = setTimeout(function () { controller.abort(); }, timeout);
-  try { return await fetch(url, settings); } finally { clearTimeout(timer); }
-}
-
-async function requestJson(url, retryServerError, timeout) {
-  var maxAttempts = retryServerError ? 2 : 1;
-  for (var attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt) await wait(1200);
-    var response;
-    try {
-      response = await fetchWithTimeout(url, { timeout: timeout || 18000, cache: 'no-store' });
-    } catch (error) {
-      var networkError = new Error((error.name === 'AbortError' ? 'API request timed out' : 'API request failed: network or CORS') + ' · ' + url);
-      networkError.url = url;
-      throw networkError;
-    }
-
-    if (!response.ok) {
-      if (response.status >= 500 && attempt + 1 < maxAttempts) continue;
-      var httpError = new Error('API HTTP ' + response.status + ' · ' + url);
-      httpError.status = response.status;
-      httpError.url = url;
-      throw httpError;
-    }
-
-    var data;
-    try { data = await response.json(); } catch (error) { throw new Error('API returned non-JSON content · ' + url); }
-    if (data && data.success === false) { throw new Error(String(data.message || data.mmessage || 'API reported failure') + ' · ' + url); }
-    return data;
-  }
-}
-
-/* ================= STREAM NORMALIZATION ================= */
-
-function normalizeStreams(data, base) {
-  var output = [];
-  var seen = new Set();
-
-  function add(value, hint, special, label) {
-    var url = safeStreamUrl(value, base);
-    if (!url) return;
-    var type = inferStreamType(url, hint);
-    var key = type + ':' + url;
-    if (seen.has(key)) return;
-    seen.add(key);
-    output.push({ url: url, type: type, specialHls: !!special && type === 'hls', label: String(label || '') });
-  }
-
-  function visit(item, depth, inheritedSpecial, label) {
-    if (!item || depth > 5) return;
-    if (typeof item === 'string') { add(item, '', inheritedSpecial, label); return; }
-    if (Array.isArray(item)) { item.forEach(function (entry) { visit(entry, depth + 1, inheritedSpecial, label); }); return; }
-    if (typeof item !== 'object') return;
-
-    var special = inheritedSpecial || !!item.playlist_key || !!item.playlistKey;
-    var sourceLabel = item.server || item.label || label;
-
-    [item.embedUrl, item.embed_url, item.embed, item.iframe].forEach(function (embed) {
-      if (typeof embed === 'string') add(embed, 'iframe', false, sourceLabel);
-      else if (embed && typeof embed === 'object') add(embed.url || embed.src, 'iframe', false, sourceLabel);
-    });
-
-    var url = item.proxiedUrl || item.url || item.file || item.src;
-    if (url) add(url, item.type || item.format || item.mimeType, special, sourceLabel);
-
-    ['streams', 'sources', 'data', 'results', 'stream'].forEach(function (key) {
-      if (item[key]) visit(item[key], depth + 1, special, sourceLabel);
-    });
-  }
-
-  visit(data, 0, false, '');
-  return output;
-}
-
-/* ================= NEW CONSUMET/CLOUDSTREAM FETCHER ================= */
-
-async function fetchProviderStreams(provider, anilistId, episode, audio) {
-  // Using Consumet API (Open-source CloudStream alternative for Web)
-  try {
-    // 1. Get episode list from Consumet AniList
-    const infoUrl = `${CORS_PROXY}${encodeURIComponent(CONSUMET_API + '/meta/anilist/info/' + anilistId)}`;
-    const infoRes = await fetch(infoUrl);
-    const infoData = await infoRes.json();
-    
-    if (!infoData || !infoData.episodes) throw new Error("No episodes found on Consumet");
-    
-    let ep = infoData.episodes.find(e => e.number === Number(episode));
-    if (!ep) ep = infoData.episodes[Number(episode) - 1]; // Fallback
-    if (!ep) throw new Error("Episode not found on Consumet");
-
-    // 2. Fetch stream using the episode ID
-    const watchUrl = `${CORS_PROXY}${encodeURIComponent(CONSUMET_API + '/meta/anilist/watch/' + ep.id)}`;
-    const watchRes = await fetch(watchUrl);
-    const watchData = await watchRes.json();
-
-    if (!watchData || !watchData.sources) throw new Error("No streams found from Consumet");
-    
-    // 3. Format for your player
-    let streams = watchData.sources.map((s, i) => {
-        return {
-            url: s.url,
-            type: s.isM3U8 ? 'hls' : 'video',
-            specialHls: false,
-            label: `Source ${i + 1} (${s.quality || 'Auto'})`
-        };
-    });
-    
-    if (watchData.download) {
-        streams.push({
-            url: watchData.download,
-            type: 'video',
-            specialHls: false,
-            label: 'Download Link'
-        });
-    }
-
-    if (streams.length === 0) throw new Error(provider + ': API returned no usable streams');
-    return streams;
-
-  } catch (error) {
-    console.warn("Consumet API failed, falling back to user's original API:", error.message);
-    // Fallback to user's original Anivexa API if Consumet fails
-    var episodeId = provider + '-' + episode;
-    var url = 'https://anivexa-api-wi89.onrender.com/watch/' + encodeURIComponent(provider) + '/' + encodeURIComponent(anilistId) + '/' + encodeURIComponent(audio) + '/' + encodeURIComponent(episodeId);
-    var data = await requestJson(url, false);
-    var streams = normalizeStreams(data, 'https://anivexa-api-wi89.onrender.com/');
-    if (!streams.length) throw new Error(provider + ': API returned no usable streams');
-    return streams;
-  }
-}
-
-/* ================= HLS LIBRARY ================= */
+/* ================= HLS LIBRARY (লোকাল ফাইল) ================= */
+// যদি আপনার ভিডিও .m3u8 হয়, তাহলে repository তে hls.min.js আপলোড করুন।
+// .mp4 ভিডিও হলে এটা লাগবে না।
 function loadHlsLibrary() {
   if (typeof Hls !== 'undefined') return Promise.resolve();
   if (hlsLibraryPromise) return hlsLibraryPromise;
@@ -428,10 +111,10 @@ function loadHlsLibrary() {
       script.onerror = null;
       if (error) { script.remove(); hlsLibraryPromise = null; reject(error); } else { resolve(); }
     }
-    script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+    script.src = 'hls.min.js';
     script.async = true;
     script.onload = function () { finish(typeof Hls === 'undefined' ? new Error('HLS library unavailable') : null); };
-    script.onerror = function () { finish(new Error('HLS library download failed')); };
+    script.onerror = function () { finish(new Error('hls.min.js not found in your site files')); };
     document.head.appendChild(script);
   });
   return hlsLibraryPromise;
@@ -527,15 +210,16 @@ function updatePlaybackStatus(text) {
   if (status) status.textContent = text;
 }
 
-function drawSources(streams, provider, session, selected) {
+function drawSources(streams, session, selected) {
   if (!playerIsCurrent(session.run)) return;
   var holder = document.getElementById('source-tools');
   if (!holder) return;
   holder.replaceChildren();
+  if (streams.length < 2) return;
 
   var label = document.createElement('small');
   label.style.display = 'block';
-  label.textContent = t('Actual sources returned by {p}:', { p: provider });
+  label.textContent = t('Available sources:');
 
   var select = document.createElement('select');
   select.className = 'sel';
@@ -544,13 +228,12 @@ function drawSources(streams, provider, session, selected) {
   streams.forEach(function (stream, index) {
     var option = document.createElement('option');
     option.value = index;
-    option.textContent = t('Source {n}', { n: index + 1 }) + (stream.label ? ' · ' + stream.label : '') + ' · ' + stream.type;
+    option.textContent = t('Source {n}', { n: index + 1 }) + ' · ' + stream.type;
     select.appendChild(option);
   });
 
   select.value = String(selected);
   select.onchange = function () {
-    if (provider !== 'Saved source') SH.provider = provider;
     SH.src = Number(select.value);
     paint(true);
   };
@@ -558,15 +241,15 @@ function drawSources(streams, provider, session, selected) {
   holder.append(label, select);
 }
 
-/* ================= STABLE MEDIA PLAYER ================= */
-async function mountStream(stream, session, provider) {
+/* ================= MEDIA PLAYER ================= */
+async function mountStream(stream, session) {
   var run = session.run;
   if (!playerIsCurrent(run)) throw new Error('Playback cancelled');
   destroyPlayer();
   var top = preparePlayerTop();
   if (!top) throw new Error('Player container missing');
 
-  session.currentStream = stream; 
+  session.currentStream = stream;
 
   if (stream.type === 'iframe') {
     var frame = document.createElement('iframe');
@@ -577,7 +260,7 @@ async function mountStream(stream, session, provider) {
     frame.style.cssText = 'width:100%;height:100%;border:0';
     top.appendChild(frame);
     appendPlayerClose(top);
-    updatePlaybackStatus('Provider: ' + provider + ' · Embedded player. If it fails inside, select another source/provider.');
+    updatePlaybackStatus('Embedded player.');
     return { verified: false };
   }
 
@@ -641,7 +324,7 @@ async function mountStream(stream, session, provider) {
         failedAfterStart = true;
         destroyPlayer();
         showPlayerMessage('Playback stopped', error.message, true);
-        updatePlaybackStatus('Provider: ' + provider + ' · ' + error.message);
+        updatePlaybackStatus(error.message);
       }
     }
 
@@ -656,23 +339,23 @@ async function mountStream(stream, session, provider) {
     function playing() {
       if (disposed || !playerIsCurrent(run)) return;
       clearTimeout(stallTimer);
-      updatePlaybackStatus('Provider: ' + provider + ' · Playing');
+      updatePlaybackStatus('Playing');
     }
 
     function waiting() {
       if (disposed || !playerIsCurrent(run) || video.paused) return;
-      updatePlaybackStatus('Provider: ' + provider + ' · Buffering; keeping the current video session.');
+      updatePlaybackStatus('Buffering...');
       clearTimeout(stallTimer);
       stallTimer = setTimeout(function () {
         if (disposed || !playerIsCurrent(run)) return;
-        updatePlaybackStatus('Provider: ' + provider + ' · Source/network is slow. You can select another source/provider.');
+        updatePlaybackStatus('Source/network is slow.');
       }, 15000);
     }
 
     function paused() {
       clearTimeout(stallTimer);
       if (!disposed && playerIsCurrent(run) && !video.ended) {
-        updatePlaybackStatus('Provider: ' + provider + ' · Paused / press Play if autoplay was blocked.');
+        updatePlaybackStatus('Paused / press Play if autoplay was blocked.');
       }
     }
 
@@ -687,13 +370,13 @@ async function mountStream(stream, session, provider) {
 
     function hlsError(event, data) {
       if (disposed || !playerIsCurrent(run)) return;
-      console.warn('HLS:', provider, data);
+      console.warn('HLS:', data);
       if (!data.fatal) return;
       var status = data.response && data.response.code;
       if (status === 401 || status === 403 || status === 404) { fail(new Error('Media HTTP ' + status)); return; }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 1) {
         networkRecoveries++;
-        updatePlaybackStatus('Provider: ' + provider + ' · Retrying the current media connection once.');
+        updatePlaybackStatus('Retrying the current media connection once.');
         recoveryTimer = setTimeout(function () {
           if (disposed || !playerIsCurrent(run) || !localHls) return;
           var position = Number.isFinite(video.currentTime) ? video.currentTime : -1;
@@ -703,7 +386,7 @@ async function mountStream(stream, session, provider) {
       }
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 1) {
         mediaRecoveries++;
-        updatePlaybackStatus('Provider: ' + provider + ' · Trying one media recovery.');
+        updatePlaybackStatus('Trying one media recovery.');
         try { localHls.recoverMediaError(); } catch (error) { fail(error); }
         return;
       }
@@ -737,7 +420,7 @@ async function mountStream(stream, session, provider) {
         var promise = video.play();
         if (promise && promise.catch) {
           promise.catch(function () {
-            if (playerIsCurrent(run) && !disposed) updatePlaybackStatus('Provider: ' + provider + ' · Press Play to start.');
+            if (playerIsCurrent(run) && !disposed) updatePlaybackStatus('Press Play to start.');
           });
         }
       } catch (error) { fail(error); }
@@ -933,30 +616,12 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
-async function findDownloadableStream(session, signal) {
-  var id = session && session.animeId;
-  if (!id) return null;
-  var list = STREAM_PROVIDERS.slice();
-  var chosen = session.state && session.state.provider;
-  if (chosen && chosen !== 'auto' && list.indexOf(chosen) > -1) list = [chosen].concat(list.filter(function (x) { return x !== chosen; }));
-  for (var i = 0; i < list.length; i++) {
-    if (signal.aborted) return null;
-    try {
-      var streams = playableSources(await fetchProviderStreams(list[i], id, session.state.e, session.audio || 'sub'), list[i]);
-      for (var j = 0; j < streams.length; j++) {
-        if (streams[j].type === 'video' || streams[j].type === 'hls') return streams[j];
-      }
-    } catch (error) {}
-  }
-  return null;
-}
-
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
-  
+
   var anime = ALL[SH.i];
   if (!anime) return;
-  
+
   var title = anime[1];
   var season = SH.s;
   var episode = SH.e;
@@ -972,64 +637,41 @@ async function downloadCurrent() {
   try {
     var session = activePlayback;
     if (session && session.currentStream) {
-        stream = session.currentStream;
-    } 
-    
-    if (!stream) {
-        dlUi(-2, t('Fetching source...'));
-        var id = getAnimeId(anime);
-        if (SH.chain && !hasVid(anime[1])) {
-            var seasonEntry = SH.chain[season - 1];
-            if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
-        }
-        if (!id) throw new Error(t("Anime ID not found."));
-        
-        var audio = SH.l === 'dub' ? 'dub' : 'sub';
-        var provider = SH.provider === 'auto' ? STREAM_PROVIDERS[0] : SH.provider;
-        
-        var streams = await fetchProviderStreams(provider, id, episode, audio);
-        streams = playableSources(streams, provider);
-        
-        if (streams && streams.length > 0) {
-            var directStream = streams.find(function(s) { return s.type === 'video' || s.type === 'hls'; });
-            stream = directStream || streams[0];
-        }
+      stream = session.currentStream;
+    } else {
+      var url = safeStreamUrl(vurl(title, season, episode, SH.l, SH.v) || vurl(title, season, episode, SH.l, 1 - SH.v));
+      if (url) stream = { url: url, type: inferStreamType(url) };
     }
 
     if (!stream) throw new Error(t('No downloadable source found.'));
 
     if (stream.type === 'iframe') {
-         directUrl = stream.url;
-         throw new Error(t('This provider uses an embedded player. Direct download is blocked.'));
+      directUrl = stream.url;
+      throw new Error(t('Embedded player cannot be downloaded directly.'));
     }
 
     var result;
-    if (stream.type === 'hls') {
-        result = await downloadHls(stream.url, dl.ctl.signal, progress);
-    } else {
-        result = await downloadFile(stream.url, dl.ctl.signal, progress);
-    }
-    
+    if (stream.type === 'hls') result = await downloadHls(stream.url, dl.ctl.signal, progress);
+    else result = await downloadFile(stream.url, dl.ctl.signal, progress);
+
     saveBlob(result.blob, dlFileName(title, season, episode, result.ext));
     dlUi(100, t('Saved to your Downloads ✓'));
     toast(t('Saved to your Downloads ✓'));
 
   } catch (error) {
     console.warn('Download Error:', error);
-    
     if (error.name === 'AbortError') {
-        dlUi(0, t('Download cancelled'), true);
+      dlUi(0, t('Download cancelled'), true);
     } else {
-        dlUi(0, t('Download failed') + ': ' + error.message, true);
-        
-        var urlToOpen = directUrl || (stream ? stream.url : null);
-        if (urlToOpen) {
-            setTimeout(function() {
-                if (confirm(t("Direct download is blocked by the server (Error 403). Do you want to open the video in a new tab to watch or download?"))) {
-                    window.open(urlToOpen, '_blank');
-                }
-            }, 100);
-        }
+      dlUi(0, t('Download failed') + ': ' + error.message, true);
+      var urlToOpen = directUrl || (stream ? stream.url : null);
+      if (urlToOpen) {
+        setTimeout(function () {
+          if (confirm(t('Direct download is blocked. Do you want to open the video in a new tab?'))) {
+            window.open(urlToOpen, '_blank');
+          }
+        }, 100);
+      }
     }
   } finally {
     dl.busy = false;
@@ -1053,42 +695,31 @@ function savePlaybackHistory(session) {
 }
 
 /* ================= SOURCE SELECTION ================= */
-function playableSources(streams, provider) {
-  return streams.filter(function (stream) {
-    if (stream.specialHls) return false;
-    if (provider === 'reanime' && stream.type === 'hls') return false;
-    return true;
-  });
-}
-
-async function trySources(streams, provider, session) {
+async function trySources(streams, session) {
   if (!playerIsCurrent(session.run)) return false;
-  streams = playableSources(streams, provider);
-  if (!streams.length) { session.lastError = provider + ': no supported ordinary stream/embed'; return false; }
+  if (!streams.length) return false;
 
   var manual = session.state.src !== null;
   var first = manual ? Number(session.state.src) : 0;
-  drawSources(streams, provider, session, first < streams.length ? first : 0);
+  if (first >= streams.length || first < 0) first = 0;
 
-  if (first >= streams.length || first < 0) { session.lastError = 'Selected source is unavailable. Choose another source.'; return false; }
   var indices = [first];
   if (!manual) { for (var i = 0; i < streams.length; i++) { if (i !== first) indices.push(i); } }
 
   for (var j = 0; j < indices.length; j++) {
     if (!playerIsCurrent(session.run)) return false;
     var index = indices[j];
-    var stream = streams[index];
-    drawSources(streams, provider, session, index);
-    updatePlaybackStatus('Trying ' + provider + ' · Source ' + (index + 1));
+    drawSources(streams, session, index);
+    updatePlaybackStatus('Loading Source ' + (index + 1));
 
     try {
-      var result = await mountStream(stream, session, provider);
+      var result = await mountStream(streams[index], session);
       if (!playerIsCurrent(session.run)) return false;
       if (result.verified) savePlaybackHistory(session);
       return true;
     } catch (error) {
       if (!playerIsCurrent(session.run)) return false;
-      session.lastError = provider + ': ' + error.message;
+      session.lastError = error.message;
       console.warn(session.lastError);
       destroyPlayer();
     }
@@ -1102,72 +733,31 @@ async function startPlayback(session) {
   var state = session.state;
   var run = session.run;
 
-  if (state.provider === 'auto') {
-    var staticUrls = [
-      vurl(anime[1], state.s, state.e, state.l, state.v),
-      vurl(anime[1], state.s, state.e, state.l, 1 - state.v)
-    ];
-    var seen = new Set();
-    var saved = [];
-    staticUrls.forEach(function (value) {
-      var url = safeStreamUrl(value);
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        saved.push({ url: url, type: inferStreamType(url), specialHls: false, label: 'Saved video' });
-      }
-    });
-    if (saved.length && await trySources(saved, 'Saved source', session)) return;
-  }
+  var urls = [
+    vurl(anime[1], state.s, state.e, state.l, state.v),
+    vurl(anime[1], state.s, state.e, state.l, 1 - state.v)
+  ];
+
+  var seen = new Set();
+  var streams = [];
+  urls.forEach(function (value) {
+    var url = safeStreamUrl(value);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      streams.push({ url: url, type: inferStreamType(url) });
+    }
+  });
+
+  if (streams.length && await trySources(streams, session)) return;
 
   if (!playerIsCurrent(run)) return;
+  destroyPlayer();
 
-  if (!SH.chainReady) {
-    showPlayerMessage('Finding seasons...', String(anime[1]));
-    return;
-  }
-
-  var id = getAnimeId(anime);
-  if (SH.chain && !hasVid(anime[1])) {
-    var seasonEntry = SH.chain[state.s - 1];
-    if (seasonEntry && seasonEntry.id) id = seasonEntry.id;
-  }
-  if (!id) {
-    showPlayerMessage('Finding AniList ID...', String(anime[1]));
-    id = await resolveAnimeIdByTitle(anime[1]);
-    if (!playerIsCurrent(run)) return;
-    if (id) anime[10] = id;
-  }
-  if (!id) {
-    showPlayerMessage('Video not found', t('No AniList ID yet (AniList may be busy). Press Retry in a minute.'), true);
-    return;
-  }
-
-  var providers = state.provider === 'auto' ? STREAM_PROVIDERS.slice() : [state.provider];
-  var audio = state.l === 'dub' ? 'dub' : 'sub';
-  session.animeId = id;
-  session.audio = audio;
-
-  for (var p = 0; p < providers.length; p++) {
-    if (!playerIsCurrent(run)) return;
-    var provider = providers[p];
-    destroyPlayer();
-    showPlayerMessage('Loading provider...', provider + ' · ' + (p + 1) + '/' + providers.length);
-    updatePlaybackStatus('Requesting: ' + provider);
-
-    try {
-      var streams = await fetchProviderStreams(provider, id, state.e, audio);
-      if (!playerIsCurrent(run)) return;
-      if (await trySources(streams, provider, session)) return;
-    } catch (error) {
-      if (!playerIsCurrent(run)) return;
-      session.lastError = provider + ': ' + error.message;
-      console.warn(session.lastError);
-    }
-  }
-
-  if (playerIsCurrent(run)) {
-    destroyPlayer();
-    showPlayerMessage('No playable stream found', session.lastError + '. Choose another provider or check the backend.', true);
+  if (!streams.length) {
+    showPlayerMessage('Video Not Found', langLabel(state.l) + ' video has not been uploaded for this episode yet.', false);
+    updatePlaybackStatus('Waiting for upload...');
+  } else {
+    showPlayerMessage('Playback failed', session.lastError, true);
     updatePlaybackStatus(session.lastError);
   }
 }
@@ -1180,9 +770,9 @@ function beginPlayback(anime, force) {
 
   var session = {
     run: playerRun, anime: anime,
-    state: { i: SH.i, s: SH.s, e: SH.e, l: SH.l, v: SH.v, provider: SH.provider || 'auto', src: SH.src === undefined ? null : SH.src },
+    state: { i: SH.i, s: SH.s, e: SH.e, l: SH.l, v: SH.v, src: SH.src === undefined ? null : SH.src },
     cancelled: false, historySaved: false, cancelAttempt: null, mediaCleanup: null, currentStream: null,
-    lastError: 'No usable stream returned'
+    lastError: 'No video available'
   };
   activePlayback = session;
 
@@ -1208,9 +798,9 @@ function openSheet(index) {
   var sheet = document.getElementById('sheet');
   if (!sheet) return;
 
-  var language = preferences.lang === 'dub' ? 'dub' : 'sub';
+  var language = (preferences.lang === 'dub' || preferences.lang === 'hindi') ? preferences.lang : 'sub';
 
-  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, provider: 'auto', src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
+  SH = { i: index, s: 1, e: 1, l: language, v: Number(preferences.srv) === 1 ? 1 : 0, src: null, play: 0, pg: 0 };
 
   var banner = anime[4] || anime[3];
   var background = banner ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(banner) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + color + ',.5),transparent 70%),#0c0c14';
@@ -1238,9 +828,6 @@ function openSheet(index) {
   if (overlay) overlay.classList.add('on');
   document.body.style.overflow = 'hidden';
 
-  var baseAnimeId = getAnimeId(anime);
-  if (hasVid(anime[1])) { SH.chainReady = true; } else if (baseAnimeId) { startSeasonChain(baseAnimeId); } else { startSeasonChainByTitle(anime); }
-
   paint();
   warmHlsLibrary();
 }
@@ -1256,16 +843,6 @@ function play(episode) {
   paint();
 }
 
-function eN() {
-  var anime = ALL[SH.i];
-  if (SH.chain && !hasVid(anime[1])) {
-    var entry = SH.chain[SH.s - 1];
-    if (entry && entry.episodes > 0) return entry.episodes;
-    if (entry && entry.id !== getAnimeId(anime)) return 12;
-  }
-  return EPN[anime[1]] || 12;
-}
-
 function mlbtn() {
   var button = document.getElementById('ml');
   if (button) button.textContent = U && U.list.indexOf(ALL[SH.i][1]) > -1 ? t('✓ In My List') : t('+ My List');
@@ -1278,21 +855,17 @@ function toggleList(name) {
   save(); decorate(); mlbtn();
 }
 
+// Language button চাপলে
 function changePlayerLanguage(index) {
   var item = playerLanguages()[index];
   if (!item) return;
   SH.l = item[0];
-  SH.provider = 'auto';
-  SH.src = null;
-  paint();
-}
-
-function changePlayerProvider(value) {
-  if (value !== 'auto' && STREAM_PROVIDERS.indexOf(value) < 0) return;
-  SH.provider = value;
   SH.src = null;
   paint(true);
 }
+
+// পুরনো কোড কোথাও কল করলে যেন error না হয়
+function changePlayerProvider() { return; }
 
 /* ================= RENDER ================= */
 function paint(force) {
@@ -1301,11 +874,9 @@ function paint(force) {
   var sheet = document.getElementById('sheet');
   if (!sheet) return;
 
+  var seasons = seasonCount(anime[1]);
+  if (SH.s > seasons) SH.s = Math.max(1, seasons);
   var count = eN();
-  var seasons;
-  if (hasVid(anime[1])) seasons = SEASONS[anime[1]] || 3;
-  else seasons = SH.chain ? SH.chain.length : 1;
-  if (SH.s > seasons) { SH.s = Math.max(1, seasons); count = eN(); }
   var page = Math.min(SH.pg || 0, Math.floor((count - 1) / PG));
 
   document.getElementById('eh').style.display = SH.play ? '' : 'none';
@@ -1321,17 +892,10 @@ function paint(force) {
   }
 
   var needsPlayback = force === true || stateKey() !== playbackKey;
+
   var seasonOptions = '';
-  var chainActive = !hasVid(anime[1]) && SH.chain;
   for (var s = 1; s <= seasons; s++) {
-    var seasonEntry = chainActive ? SH.chain[s - 1] : null;
-    var seasonLabel = (seasonEntry && seasonEntry.num) || s;
-    seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>' + esc(t('Season {n}', { n: seasonLabel })) + '</option>';
-  }
-  var seasonInfo = '';
-  if (chainActive && SH.chain[SH.s - 1]) {
-    var playing = SH.chain[SH.s - 1];
-    seasonInfo = '<small class="mu" style="display:block;width:100%;margin:2px 0 6px">' + esc(t('Playing: {title} · AniList #{id}', { title: playing.title || anime[1], id: playing.id })) + '</small>';
+    seasonOptions += '<option value="' + s + '"' + (s === SH.s ? ' selected' : '') + '>' + esc(t('Season {n}', { n: s })) + '</option>';
   }
 
   var rangeOptions = '';
@@ -1340,14 +904,20 @@ function paint(force) {
     rangeOptions = '<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">' + rangeOptions + '</select>';
   }
 
-  var providerOptions = '<option value="auto"' + (SH.provider === 'auto' ? ' selected' : '') + '>' + esc(t('Auto · try available providers')) + '</option>';
-  STREAM_PROVIDERS.forEach(function (provider) { providerOptions += '<option value="' + provider + '"' + (SH.provider === provider ? ' selected' : '') + '>' + provider + '</option>'; });
-  var providerControl = '<label style="display:block;margin:8px 0">' + esc(t('Provider')) + ' <select class="sel" aria-label="Provider" onchange="changePlayerProvider(this.value)">' + providerOptions + '</select></label>';
+  // Sub | Dub | Hindi button
+  var langButtons = playerLanguages().map(function (item, index) {
+    return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>';
+  }).join('');
 
-  document.getElementById('ctl').innerHTML = '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.sTouched=1;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select><div class="seg">' + playerLanguages().map(function (item, index) { return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>'; }).join('') + '</div>' + providerControl + seasonInfo + rangeOptions;
+  document.getElementById('ctl').innerHTML =
+    '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select>'
+    + '<div class="seg">' + langButtons + '</div>'
+    + rangeOptions;
 
   var episodeButtons = '';
-  for (var episode = page * PG + 1; episode <= Math.min(count, page * PG + PG); episode++) { episodeButtons += '<button class="' + (episode === SH.e ? 'on' : '') + '" onclick="play(' + episode + ')">' + episode + '</button>'; }
+  for (var episode = page * PG + 1; episode <= Math.min(count, page * PG + PG); episode++) {
+    episodeButtons += '<button class="' + (episode === SH.e ? 'on' : '') + '" onclick="play(' + episode + ')">' + episode + '</button>';
+  }
   document.getElementById('eps').innerHTML = episodeButtons;
 
   document.getElementById('np').innerHTML = '<div class="np"><span>▶ ' + esc(t('S{s} · Episode {e}', { s: SH.s, e: SH.e })) + '</span><div><button ' + (SH.e < 2 ? 'disabled ' : '') + 'onclick="play(' + (SH.e - 1) + ')">‹ ' + esc(t('Prev')) + '</button><button ' + (SH.e >= count ? 'disabled ' : '') + 'onclick="play(' + (SH.e + 1) + ')">' + esc(t('Next')) + ' ›</button></div></div>';
@@ -1365,9 +935,7 @@ function decorate() {
     if (!anime) return;
     var poster = card.querySelector('.poster');
     var bookmark = card.querySelector('.bm');
-    var local = hasVid(anime[1]);
-    var searchable = getAnimeId(anime) !== null || !!String(anime[1] || '').trim();
-    var showWatch = local || searchable;
+    var showWatch = hasVid(anime[1]);
 
     if (poster) {
       var watch = poster.querySelector('.wbtn');
@@ -1381,7 +949,6 @@ function decorate() {
         }
         watch.textContent = t('▶ Watch');
         watch.setAttribute('aria-label', 'Watch ' + String(anime[1] || 'anime'));
-        watch.title = local ? 'Watch saved video' : 'Search providers; availability not verified';
         watch.onclick = function (event) { event.preventDefault(); event.stopPropagation(); openSheet(index); play(); };
       } else if (watch) { watch.remove(); }
     }
