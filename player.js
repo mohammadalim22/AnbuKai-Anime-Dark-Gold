@@ -1,9 +1,6 @@
 /* =====================================================
    player.js  (100% Self-Hosted)
-   - কোনো third-party API / scraper / AniList নেই
-   - ভিডিও শুধু আপনার নিজের VIDEOS ডেটা (videos.js) থেকে চলবে
-   - Language: Sub | Dub | Hindi
-   - HLS দরকার হলে লোকাল 'hls.min.js' ফাইল ব্যবহার হবে
+   - PixelDrain Direct Link Support Added
    ===================================================== */
 
 var SH = {};
@@ -15,19 +12,12 @@ var playerRun = 0;
 var playbackKey = '';
 var hlsLibraryPromise = null;
 
-/* ================= ANIME INFO (নিজে লিখে দিন) =================
-   প্রতিটা anime এর কোন season এ কয়টা episode, সেটা এখানে লিখুন।
-   নাম অবশ্যই সাইটে যেভাবে দেখায় ঠিক সেভাবেই লিখতে হবে।
-   ফরম্যাট:  "Anime Name": { seasonNumber: episodeCount, ... }
-   (নিচের সংখ্যাগুলো উদাহরণ, নিজে ঠিক করে নিন)
-   ============================================================== */
 var ANIME_INFO = {
   "Attack on Titan": { 1: 25, 2: 12, 3: 22, 4: 28 },
   "Black Clover": { 1: 51, 2: 51, 3: 51, 4: 51 },
   "ONE PIECE": { 1: 100 }
 };
 
-/* ================= LANGUAGES ================= */
 function playerLanguages() {
   return [['sub', 'Sub'], ['dub', 'Dub'], ['hindi', 'Hindi']];
 }
@@ -38,27 +28,14 @@ function langLabel(code) {
   return code;
 }
 
-/* ================= SERVERS (মোট ৭টা) =================
-   videos.js এ প্রতিটা language এর লিংক এই ক্রমে দিতে হবে:
-   [0] Byse, [1] VidMoly, [2] LuluStream, [3] Voe,
-   [4] MixDrop, [5] Streamtape, [6] DoodStream
-   (যে server এ লিংক নেই সেখানে "" লিখুন)
-   ====================================================== */
 var SERVERS = [
-  'Server 01', // Byse
-  'Server 02', // VidMoly
-  'Server 03', // LuluStream
-  'Server 04', // Voe
-  'Server 05', // MixDrop
-  'Server 06', // Streamtape
-  'Server 07'  // DoodStream
+  'Server 01', 'Server 02', 'Server 03', 'Server 04', 'Server 05', 'Server 06', 'Server 07'
 ];
 
 function serverHasVideo(name, season, episode, language, index) {
   return !!safeStreamUrl(vurl(name, season, episode, language, index));
 }
 
-// যে যে server এ এই episode/language এর ভিডিও আছে, শুধু সেগুলোর index
 function availableServers(name, season, episode, language) {
   var list = [];
   for (var i = 0; i < SERVERS.length; i++) {
@@ -74,13 +51,11 @@ function firstServerWithVideo(name, season, episode, language) {
   return -1;
 }
 
-/* ================= DATA HELPERS ================= */
 function hasVid(name) {
   var item = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   return !!item && Object.keys(item).length > 0;
 }
 
-// VIDEOS[name][season][episode][language][server]
 function vurl(name, season, episode, language, server) {
   var anime = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   var item = anime && anime[season] && anime[season][episode] && anime[season][episode][language];
@@ -101,16 +76,17 @@ function safeStreamUrl(value) {
   } catch (error) { return ''; }
 }
 
+// ===> এখানে পিক্সেলড্রেনের ডাইরেক্ট লিংক চেনার লজিক যোগ করা হয়েছে <===
 function inferStreamType(url, hint) {
   hint = String(hint || '').toLowerCase();
   if (/\.m3u8(?:[?#]|$)/i.test(url)) return 'hls';
   if (hint === 'iframe' || hint === 'embed') return 'iframe';
   if (/hls|mpegurl/.test(hint)) return 'hls';
+  if (url.includes('pixeldrain.com/api/file/')) return 'video'; // PixelDrain Direct Link
   if (hint === 'video' || hint.indexOf('video/') === 0 || /\.(mp4|webm|ogg|mkv)(?:[?#]|$)/i.test(url)) return 'video';
   return 'iframe';
 }
 
-// মোট season সংখ্যা: ANIME_INFO > AniList chain / videos.js > 1
 function seasonCount(name) {
   if (typeof ANIME_INFO !== 'undefined' && ANIME_INFO[name]) {
     return Math.max.apply(null, Object.keys(ANIME_INFO[name]).map(Number));
@@ -126,7 +102,6 @@ function seasonCount(name) {
   return best;
 }
 
-// নির্দিষ্ট season এর মোট episode সংখ্যা: ANIME_INFO > AniList > EPN > videos.js > 12
 function eN() {
   var anime = ALL[SH.i];
   var name = anime[1];
@@ -149,9 +124,7 @@ function stateKey() {
   return [SH.i, SH.s, SH.e, SH.l, SH.src === null ? 'auto' : SH.src, SH.v].join('|');
 }
 
-function wait(ms) {
-  return new Promise(function (resolve) { setTimeout(resolve, ms); });
-}
+function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
 function getAnimeId(anime) {
   if (!anime) return null;
@@ -178,9 +151,6 @@ async function fetchWithTimeout(url, options) {
   try { return await fetch(url, settings); } finally { clearTimeout(timer); }
 }
 
-/* ================= SEASON CHAIN (AniList: শুধু Season/Episode তথ্য) =================
-   ভিডিও AniList থেকে আসে না, ভিডিও শুধু আপনার videos.js থেকে।
-   ==================================================================================== */
 var SEASON_FORMATS = /^(TV|TV_SHORT|ONA)$/;
 var SEASON_FIELDS = 'id type format episodes status seasonYear startDate{year} title{romaji english} nextAiringEpisode{episode}';
 var SEASON_QUERY = 'query($id:Int){Media(id:$id,type:ANIME){' + SEASON_FIELDS + ' relations{edges{relationType(version:2) node{' + SEASON_FIELDS + '}}}}}';
@@ -211,9 +181,7 @@ function saveSeasonChains() {
   } catch (error) {}
 }
 
-function anilistBusy() {
-  return Date.now() < Math.max(seasonCooldown, window.akBlockUntil || 0);
-}
+function anilistBusy() { return Date.now() < Math.max(seasonCooldown, window.akBlockUntil || 0); }
 
 function fetchSeasonNode(id) {
   if (seasonNodeCache.has(id)) return seasonNodeCache.get(id);
@@ -236,9 +204,7 @@ function fetchSeasonNode(id) {
   return promise;
 }
 
-function seasonYearOf(node) {
-  return node.seasonYear || (node.startDate && node.startDate.year) || 9999;
-}
+function seasonYearOf(node) { return node.seasonYear || (node.startDate && node.startDate.year) || 9999; }
 
 function seasonSummary(node) {
   var episodes = node.episodes || (node.nextAiringEpisode ? node.nextAiringEpisode.episode - 1 : 0) || 0;
@@ -266,14 +232,8 @@ function seasonRelations(node, type, seen, latestFirst) {
 async function buildSeasonChain(baseId, getNode) {
   var base = await getNode(baseId);
   if (!base || !SEASON_FORMATS.test(base.format || '')) return { chain: [seasonSummary(base)], complete: true };
-
   var seen = new Set([base.id]);
-  var before = [];
-  var after = [];
-  var complete = true;
-  var cur = base;
-  var hop;
-
+  var before = [], after = [], complete = true, cur = base, hop;
   for (hop = 0; hop < 8; hop++) {
     var prev = seasonRelations(cur, 'PREQUEL', seen, true)[0];
     if (!prev) break;
@@ -281,7 +241,6 @@ async function buildSeasonChain(baseId, getNode) {
     before.unshift(seasonSummary(prev));
     try { cur = await getNode(prev.id); } catch (error) { complete = false; break; }
   }
-
   cur = base;
   for (hop = 0; hop < 8; hop++) {
     var next = seasonRelations(cur, 'SEQUEL', seen, false)[0];
@@ -290,7 +249,6 @@ async function buildSeasonChain(baseId, getNode) {
     after.push(seasonSummary(next));
     try { cur = await getNode(next.id); } catch (error) { complete = false; break; }
   }
-
   return { chain: before.concat([seasonSummary(base)], after), complete: complete };
 }
 
@@ -366,9 +324,6 @@ function startSeasonChain(baseId) {
   );
 }
 
-/* ================= HLS LIBRARY (লোকাল ফাইল) ================= */
-// যদি আপনার ভিডিও .m3u8 হয়, তাহলে repository তে hls.min.js আপলোড করুন।
-// .mp4 ভিডিও হলে এটা লাগবে না।
 function loadHlsLibrary() {
   if (typeof Hls !== 'undefined') return Promise.resolve();
   if (hlsLibraryPromise) return hlsLibraryPromise;
@@ -398,7 +353,6 @@ function warmHlsLibrary() {
   if (!video.canPlayType('application/vnd.apple.mpegurl')) loadHlsLibrary().catch(function () {});
 }
 
-/* ================= SESSION + CLEANUP ================= */
 function playerIsCurrent(run) {
   var sheet = document.getElementById('sheet');
   return !!(run === playerRun && activePlayback && !activePlayback.cancelled && sheet && sheet.classList.contains('on') && SH.play);
@@ -436,7 +390,6 @@ function stopPlayback() {
   activePlayback = null;
 }
 
-/* ================= PLAYER UI ================= */
 function preparePlayerTop() {
   var top = document.getElementById('shtop');
   if (top) {
@@ -514,11 +467,6 @@ function drawSources(streams, session, selected) {
   holder.append(label, select);
 }
 
-/* ================= CUSTOM VIDEO CONTROLS =================
-   শুধু সরাসরি ভিডিও ফাইল (.mp4 / .m3u8) এর জন্য কাজ করে।
-   Embed (iframe) লিংকে hosting site এর নিজের player ই থাকবে।
-   ফিচার: ±10 সেকেন্ড, ডাবল ট্যাপ, প্রগ্রেস বার, স্পিড, ফুলস্ক্রিন
-   ========================================================== */
 function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) sec = 0;
   var h = Math.floor(sec / 3600);
@@ -695,7 +643,6 @@ function attachCustomControls(wrap, video) {
   };
 }
 
-/* ================= MEDIA PLAYER ================= */
 async function mountStream(stream, session) {
   var run = session.run;
   if (!playerIsCurrent(run)) throw new Error('Playback cancelled');
@@ -719,7 +666,7 @@ async function mountStream(stream, session) {
   }
 
   var video = document.createElement('video');
-  video.controls = false; // নিজস্ব controls ব্যবহার হবে
+  video.controls = false;
   video.autoplay = true;
   video.playsInline = true;
   video.preload = 'auto';
@@ -887,7 +834,6 @@ async function mountStream(stream, session) {
   });
 }
 
-/* ================= DOWNLOAD ================= */
 var dl = { busy: false, ctl: null };
 
 function fmtMB(bytes) { return (bytes / 1048576).toFixed(1) + ' MB'; }
@@ -1075,8 +1021,6 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
-// Download লিংক videos.js এ আলাদা করে দিতে হয়:
-// VIDEOS[name][season][episode].dl = { sub: "url", dub: "url", hindi: "url" }
 function vdl(name, season, episode, language) {
   var anime = typeof VIDEOS !== 'undefined' && VIDEOS[name];
   var ep = anime && anime[season] && anime[season][episode];
@@ -1084,7 +1028,6 @@ function vdl(name, season, episode, language) {
   return map ? safeStreamUrl(map[language] || '') : '';
 }
 
-// ব্রাউজারের নিজস্ব ডাউনলোড: নতুন tab খোলে না, hidden frame দিয়ে শুরু হয়
 function nativeDownload(url) {
   var frame = document.createElement('iframe');
   frame.style.display = 'none';
@@ -1111,13 +1054,11 @@ async function downloadCurrent() {
   var stream = null;
 
   try {
-    // ১) চলমান ভিডিও যদি সরাসরি ফাইল হয় (mp4/m3u8)
     var session = activePlayback;
     if (session && session.currentStream && session.currentStream.type !== 'iframe') {
       stream = session.currentStream;
     }
 
-    // ২) নাহলে videos.js এর আলাদা Download লিংক
     if (!stream) {
       var extra = vdl(title, season, episode, SH.l);
       if (extra) stream = { url: extra, type: inferStreamType(extra, 'video') };
@@ -1138,7 +1079,6 @@ async function downloadCurrent() {
     if (error.name === 'AbortError') {
       dlUi(0, t('Download cancelled'), true);
     } else if (stream && stream.type !== 'hls') {
-      // সার্ভার fetch ব্লক করলে ব্রাউজারের নিজস্ব ডাউনলোডে চেষ্টা (নতুন tab ছাড়া)
       nativeDownload(stream.url);
       dlUi(100, t('Download started by your browser. Check your notifications.'));
     } else {
@@ -1151,7 +1091,6 @@ async function downloadCurrent() {
   }
 }
 
-/* ================= HISTORY ================= */
 function savePlaybackHistory(session) {
   if (!playerIsCurrent(session.run) || session.historySaved || !U) return;
   session.historySaved = true;
@@ -1165,7 +1104,6 @@ function savePlaybackHistory(session) {
   save();
 }
 
-/* ================= SOURCE SELECTION ================= */
 async function trySources(streams, session) {
   if (!playerIsCurrent(session.run)) return false;
   if (!streams.length) return false;
@@ -1198,7 +1136,6 @@ async function trySources(streams, session) {
   return false;
 }
 
-/* ================= PLAYBACK FLOW ================= */
 async function startPlayback(session) {
   var anime = session.anime;
   var state = session.state;
@@ -1256,7 +1193,6 @@ function beginPlayback(anime, force) {
   });
 }
 
-/* ================= SHEET ================= */
 function openSheet(index) {
   stopPlayback();
   var anime = ALL[index];
@@ -1296,7 +1232,6 @@ function openSheet(index) {
   if (overlay) overlay.classList.add('on');
   document.body.style.overflow = 'hidden';
 
-  // AniList থেকে শুধু Season/Episode তথ্য আনা (ভিডিও নয়)
   var baseAnimeId = getAnimeId(anime);
   if (baseAnimeId) startSeasonChain(baseAnimeId); else startSeasonChainByTitle(anime);
 
@@ -1327,7 +1262,6 @@ function toggleList(name) {
   save(); decorate(); mlbtn();
 }
 
-// Language button চাপলে
 function changePlayerLanguage(index) {
   var item = playerLanguages()[index];
   if (!item) return;
@@ -1336,7 +1270,6 @@ function changePlayerLanguage(index) {
   paint(true);
 }
 
-// Server button চাপলে
 function changePlayerServer(index) {
   var anime = ALL[SH.i];
   if (!anime || index < 0 || index >= SERVERS.length) return;
@@ -1350,7 +1283,6 @@ function changePlayerServer(index) {
   paint(true);
 }
 
-// Server বাটন চাপলে list খোলা/বন্ধ
 function toggleServerMenu() {
   var menu = document.getElementById('srv-menu');
   if (!menu) return;
@@ -1360,10 +1292,8 @@ function toggleServerMenu() {
   if (arrow) arrow.textContent = SH.srvOpen ? '▴' : '▾';
 }
 
-// পুরনো কোড কোথাও কল করলে যেন error না হয়
 function changePlayerProvider() { return; }
 
-/* ================= RENDER ================= */
 function paint(force) {
   var anime = ALL[SH.i];
   if (!anime) return;
@@ -1387,7 +1317,6 @@ function paint(force) {
     return;
   }
 
-  // বর্তমান server এ ভিডিও না থাকলে প্রথম যে server এ আছে সেটায় যাবে
   if (!serverHasVideo(anime[1], SH.s, SH.e, SH.l, SH.v)) {
     var altServer = firstServerWithVideo(anime[1], SH.s, SH.e, SH.l);
     if (altServer !== -1) SH.v = altServer;
@@ -1412,13 +1341,10 @@ function paint(force) {
     rangeOptions = '<select class="sel" onchange="SH.pg=+this.value;paint()" aria-label="Episode range">' + rangeOptions + '</select>';
   }
 
-  // Sub | Dub | Hindi button
   var langButtons = playerLanguages().map(function (item, index) {
     return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>';
   }).join('');
 
-  // একটা "Server" বাটন: চাপলে পাশে আলাদা popup খুলবে (Server 01, 02, ...)
-  // শুধু যে server এ ভিডিও আছে সেগুলোই দেখাবে
   var availList = availableServers(anime[1], SH.s, SH.e, SH.l);
   var serverControl;
   if (!availList.length) {
@@ -1455,7 +1381,6 @@ function paint(force) {
   if (needsPlayback) beginPlayback(anime, force === true);
 }
 
-/* ================= CARDS ================= */
 function decorate() {
   document.querySelectorAll('.card').forEach(function (card, index) {
     var anime = ALL[index];
@@ -1487,7 +1412,6 @@ function decorate() {
   });
 }
 
-/* ================= COMMENTS ================= */
 function ck() { return 'akC:' + ALL[SH.i][1] + ':' + SH.s + ':' + SH.e; }
 function ago(time) {
   var seconds = (Date.now() - time) / 1000;
@@ -1541,7 +1465,6 @@ function delC(index) {
   cmt();
 }
 
-/* ================= EVENTS ================= */
 document.addEventListener('click', function (event) {
   if (!event.target.closest('.search') && typeof sr !== 'undefined' && sr) sr.className = '';
 });
@@ -1578,7 +1501,6 @@ if (existingSheet) {
 
 window.addEventListener('pagehide', function () { stopPlayback(); });
 
-/* ================= INITIALIZE ================= */
 ub();
 applyTheme();
 decorate();
