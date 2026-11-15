@@ -1075,6 +1075,24 @@ async function downloadHls(url, signal, progress) {
   return { blob: new Blob(all, { type: fragmented ? 'video/mp4' : 'video/mp2t' }), ext: fragmented ? 'mp4' : 'ts' };
 }
 
+// Download লিংক videos.js এ আলাদা করে দিতে হয়:
+// VIDEOS[name][season][episode].dl = { sub: "url", dub: "url", hindi: "url" }
+function vdl(name, season, episode, language) {
+  var anime = typeof VIDEOS !== 'undefined' && VIDEOS[name];
+  var ep = anime && anime[season] && anime[season][episode];
+  var map = ep && ep.dl;
+  return map ? safeStreamUrl(map[language] || '') : '';
+}
+
+// ব্রাউজারের নিজস্ব ডাউনলোড: নতুন tab খোলে না, hidden frame দিয়ে শুরু হয়
+function nativeDownload(url) {
+  var frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = url;
+  document.body.appendChild(frame);
+  setTimeout(function () { frame.remove(); }, 120000);
+}
+
 async function downloadCurrent() {
   if (dl.busy) { if (dl.ctl) dl.ctl.abort(); return; }
 
@@ -1091,23 +1109,21 @@ async function downloadCurrent() {
   dlUi(-2, t('Finding source') + '…');
   var progress = function (pct, text) { dlUi(pct, t('Downloading') + ' · ' + text); };
   var stream = null;
-  var directUrl = null;
 
   try {
+    // ১) চলমান ভিডিও যদি সরাসরি ফাইল হয় (mp4/m3u8)
     var session = activePlayback;
-    if (session && session.currentStream) {
+    if (session && session.currentStream && session.currentStream.type !== 'iframe') {
       stream = session.currentStream;
-    } else {
-      var url = safeStreamUrl(vurl(title, season, episode, SH.l, SH.v));
-      if (url) stream = { url: url, type: inferStreamType(url) };
     }
 
-    if (!stream) throw new Error(t('No downloadable source found.'));
-
-    if (stream.type === 'iframe') {
-      directUrl = stream.url;
-      throw new Error(t('Embedded player cannot be downloaded directly.'));
+    // ২) নাহলে videos.js এর আলাদা Download লিংক
+    if (!stream) {
+      var extra = vdl(title, season, episode, SH.l);
+      if (extra) stream = { url: extra, type: inferStreamType(extra, 'video') };
     }
+
+    if (!stream) throw new Error(t('No download link has been added for this episode.'));
 
     var result;
     if (stream.type === 'hls') result = await downloadHls(stream.url, dl.ctl.signal, progress);
@@ -1121,16 +1137,12 @@ async function downloadCurrent() {
     console.warn('Download Error:', error);
     if (error.name === 'AbortError') {
       dlUi(0, t('Download cancelled'), true);
+    } else if (stream && stream.type !== 'hls') {
+      // সার্ভার fetch ব্লক করলে ব্রাউজারের নিজস্ব ডাউনলোডে চেষ্টা (নতুন tab ছাড়া)
+      nativeDownload(stream.url);
+      dlUi(100, t('Download started by your browser. Check your notifications.'));
     } else {
       dlUi(0, t('Download failed') + ': ' + error.message, true);
-      var urlToOpen = directUrl || (stream ? stream.url : null);
-      if (urlToOpen) {
-        setTimeout(function () {
-          if (confirm(t('Direct download is blocked. Do you want to open the video in a new tab?'))) {
-            window.open(urlToOpen, '_blank');
-          }
-        }, 100);
-      }
     }
   } finally {
     dl.busy = false;
