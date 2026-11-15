@@ -26,7 +26,7 @@ var VIDEOS={};
 
   // --- Episode 2 এর জন্য Hindi লিংক ---
   s1[2].hindi = [
-      'https://pixeldrain.com/api/file/hS1sAnbV'     // Server 1 (Pixeldrain Direct Video)
+      'https://pixeldrain.com/api/file/hS1sAnbV?download' // Server 1 (Pixeldrain Direct with Download)
   ];
 
   VIDEOS['Naruto Shippuden']={1:s1};
