@@ -17,16 +17,17 @@ var VIDEOS={};
       s1[i]={dub:[base+(i<10?'0'+i:i)+'.mp4','']};
   }
   
-  // --- Episode 1 এর জন্য Hindi লিংক ---
+  // --- Episode 1 এর জন্য Hindi লিংক (সবগুলোই Embed) ---
   s1[1].hindi = [
-      'https://vidmoly.org/embed-wvlq0e4ot4ci.html', // Server 1 (Embed)
-      'https://byselapuix.com/e/t4o7c3973jg1',       // Server 2 (Embed)
-      'https://streamtape.com/e/Ool1JqBLB3C77K/'     // Server 3 (Streamtape Embed)
+      'https://vidmoly.org/embed-wvlq0e4ot4ci.html', // Server 1 (Vidmoly)
+      'https://byselapuix.com/e/t4o7c3973jg1',       // Server 2 (Byselapuix)
+      'https://streamtape.com/e/Ool1JqBLB3C77K/',    // Server 3 (Streamtape)
+      'https://mixdrop.top/e/mkkk4wz0t8zj3k'         // Server 4 (Mixdrop - New)
   ];
 
   // --- Episode 2 এর জন্য Hindi লিংক ---
   s1[2].hindi = [
-      'https://pixeldrain.com/api/file/hS1sAnbV?download' // Server 1 (Pixeldrain Direct with Download)
+      'https://pixeldrain.com/api/file/hS1sAnbV?download' // Server 1 (Pixeldrain)
   ];
 
   VIDEOS['Naruto Shippuden']={1:s1};
