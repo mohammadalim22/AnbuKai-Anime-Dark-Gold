@@ -58,6 +58,15 @@ function serverHasVideo(name, season, episode, language, index) {
   return !!safeStreamUrl(vurl(name, season, episode, language, index));
 }
 
+// যে যে server এ এই episode/language এর ভিডিও আছে, শুধু সেগুলোর index
+function availableServers(name, season, episode, language) {
+  var list = [];
+  for (var i = 0; i < SERVERS.length; i++) {
+    if (serverHasVideo(name, season, episode, language, i)) list.push(i);
+  }
+  return list;
+}
+
 function firstServerWithVideo(name, season, episode, language) {
   for (var i = 0; i < SERVERS.length; i++) {
     if (serverHasVideo(name, season, episode, language, i)) return i;
@@ -1061,7 +1070,7 @@ function openSheet(index) {
 
   var language = (preferences.lang === 'dub' || preferences.lang === 'hindi') ? preferences.lang : 'sub';
 
-  SH = { i: index, s: 1, e: 1, l: language, v: (Number(preferences.srv) >= 0 && Number(preferences.srv) < SERVERS.length) ? Number(preferences.srv) : 0, src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0 };
+  SH = { i: index, s: 1, e: 1, l: language, v: (Number(preferences.srv) >= 0 && Number(preferences.srv) < SERVERS.length) ? Number(preferences.srv) : 0, src: null, play: 0, pg: 0, chain: null, chainReady: false, chainTok: 0, baseS: 1, sTouched: 0, srvOpen: false };
 
   var banner = anime[4] || anime[3];
   var background = banner ? 'linear-gradient(to top,rgba(12,12,20,.3),transparent),url(' + cu(banner) + ') center/cover,#0c0c14' : 'radial-gradient(85% 70% at 70% 0%,rgba(' + color + ',.5),transparent 70%),#0c0c14';
@@ -1139,7 +1148,18 @@ function changePlayerServer(index) {
   }
   SH.v = index;
   SH.src = null;
+  SH.srvOpen = false;
   paint(true);
+}
+
+// Server বাটন চাপলে list খোলা/বন্ধ
+function toggleServerMenu() {
+  var menu = document.getElementById('srv-menu');
+  if (!menu) return;
+  SH.srvOpen = !SH.srvOpen;
+  menu.style.display = SH.srvOpen ? 'block' : 'none';
+  var arrow = document.getElementById('srv-arrow');
+  if (arrow) arrow.textContent = SH.srvOpen ? '▴' : '▾';
 }
 
 // পুরনো কোড কোথাও কল করলে যেন error না হয়
@@ -1199,16 +1219,27 @@ function paint(force) {
     return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>';
   }).join('');
 
-  // Server 01 ... Server 07
-  var serverButtons = SERVERS.map(function (label, index) {
-    var has = serverHasVideo(anime[1], SH.s, SH.e, SH.l, index);
-    return '<button class="' + (index === SH.v ? 'on' : '') + '"' + (has ? '' : ' style="opacity:.4"') + ' onclick="changePlayerServer(' + index + ')">' + esc(t(label)) + '</button>';
-  }).join('');
+  // একটা Server বাটন: চাপলে শুধু যে server গুলোতে ভিডিও আছে সেগুলো দেখাবে
+  var availList = availableServers(anime[1], SH.s, SH.e, SH.l);
+  var curPos = availList.indexOf(SH.v);
+  var serverControl;
+  if (!availList.length) {
+    serverControl = '<div class="srvwrap" style="width:100%;margin:8px 0"><button class="btn sm" disabled style="opacity:.5;width:100%">' + esc(t('No server available')) + '</button></div>';
+  } else {
+    var items = availList.map(function (serverIndex, pos) {
+      var active = serverIndex === SH.v;
+      return '<button onclick="changePlayerServer(' + serverIndex + ')" style="display:block;width:100%;text-align:left;padding:12px 16px;margin:0;border:0;border-bottom:1px solid rgba(255,255,255,.08);background:' + (active ? 'rgba(233,196,106,.18)' : 'transparent') + ';color:inherit;font:inherit;cursor:pointer">' + (active ? '✓ ' : '') + esc(t('Server')) + ' ' + String(pos + 1).padStart(2, '0') + '</button>';
+    }).join('');
+    serverControl = '<div class="srvwrap" style="width:100%;margin:8px 0">'
+      + '<button class="btn sm" id="srv-btn" onclick="toggleServerMenu()" style="width:100%;display:flex;justify-content:space-between;align-items:center"><span>' + esc(t('Server')) + ' ' + String((curPos < 0 ? 0 : curPos) + 1).padStart(2, '0') + ' · ' + availList.length + '</span><span id="srv-arrow">' + (SH.srvOpen ? '▴' : '▾') + '</span></button>'
+      + '<div id="srv-menu" style="display:' + (SH.srvOpen ? 'block' : 'none') + ';margin-top:6px;border-radius:14px;overflow:hidden;background:rgba(20,20,30,.96);border:1px solid rgba(233,196,106,.35)">' + items + '</div>'
+      + '</div>';
+  }
 
   document.getElementById('ctl').innerHTML =
     '<select class="sel" aria-label="Season" onchange="SH.s=+this.value;SH.e=1;SH.pg=0;SH.src=null;paint()">' + seasonOptions + '</select>'
     + '<div class="seg">' + langButtons + '</div>'
-    + '<div class="seg" style="display:flex;flex-wrap:wrap;width:100%;margin:8px 0;border-radius:20px">' + serverButtons + '</div>'
+    + serverControl
     + seasonInfo
     + rangeOptions;
 
@@ -1315,6 +1346,16 @@ function delC(index) {
 /* ================= EVENTS ================= */
 document.addEventListener('click', function (event) {
   if (!event.target.closest('.search') && typeof sr !== 'undefined' && sr) sr.className = '';
+});
+
+document.addEventListener('click', function (event) {
+  if (SH && SH.srvOpen && !event.target.closest('.srvwrap')) {
+    SH.srvOpen = false;
+    var menu = document.getElementById('srv-menu');
+    if (menu) menu.style.display = 'none';
+    var arrow = document.getElementById('srv-arrow');
+    if (arrow) arrow.textContent = '▾';
+  }
 });
 
 document.querySelectorAll('.arr button').forEach(function (button) {
