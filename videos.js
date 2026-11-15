@@ -23,9 +23,9 @@ var VIDEOS={};
       'https://byselapuix.com/e/t4o7c3973jg1'        // Hindi Server 2
   ];
 
-  // --- Episode 2 এর জন্য নতুন Hindi লিংক (Pixeldrain) ---
+  // --- Episode 2 এর জন্য নতুন Hindi লিংক (Pixeldrain Direct Link) ---
   s1[2].hindi = [
-      'https://pixeldrain.com/u/wtTUYAay?embed'      // Hindi Server 1 (Pixeldrain)
+      'https://pixeldrain.com/api/file/hS1sAnbV'     // Hindi Server 1 (Direct File)
   ];
 
   VIDEOS['Naruto Shippuden']={1:s1};
