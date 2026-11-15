@@ -17,15 +17,15 @@ var VIDEOS={};
       s1[i]={dub:[base+(i<10?'0'+i:i)+'.mp4','']};
   }
   
-  // --- Episode 1 এর জন্য আপনার আগের Hindi লিংকগুলো ---
+  // --- Episode 1 এর জন্য আগের Hindi লিংকগুলো ---
   s1[1].hindi = [
-      'https://vidmoly.org/embed-wvlq0e4ot4ci.html', // Hindi Server 1
-      'https://byselapuix.com/e/t4o7c3973jg1'        // Hindi Server 2
+      'https://vidmoly.org/embed-wvlq0e4ot4ci.html', // Hindi Server 1 (Embed)
+      'https://byselapuix.com/e/t4o7c3973jg1'        // Hindi Server 2 (Embed)
   ];
 
   // --- Episode 2 এর জন্য নতুন Hindi লিংক (Pixeldrain Direct Link) ---
   s1[2].hindi = [
-      'https://pixeldrain.com/api/file/hS1sAnbV'     // Hindi Server 1 (Direct File)
+      'https://pixeldrain.com/api/file/hS1sAnbV'     // Hindi Server 1 (Direct MP4 Video)
   ];
 
   VIDEOS['Naruto Shippuden']={1:s1};
