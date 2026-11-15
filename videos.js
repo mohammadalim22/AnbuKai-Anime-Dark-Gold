@@ -14,10 +14,10 @@ var VIDEOS = {};
     s1[1].hindi = [
         'https://vidmoly.org/embed-wvlq0e4ot4ci.html', // Hindi Server 1 (Embed)
         'https://byselapuix.com/e/t4o7c3973jg1',       // Hindi Server 2 (Embed)
-        'https://pixeldrain.com/api/file/wtTUYAay'     // PixelDrain Direct Link (Server 3)
+        'https://pixeldrain.com/u/wtTUYAay?embed'      // PixelDrain Embed Link (Server 3)
     ];
 
-    // ডাউনলোড বাটনের জন্য আলাদা লিংক (player.js এটি খুঁজবে)
+    // ডাউনলোড বাটনের জন্য আলাদা লিংক (player.js এই লিংকটি খুঁজে বের করবে)
     s1[1].dl = {
         hindi: 'https://pixeldrain.com/api/file/wtTUYAay?download'
     };
