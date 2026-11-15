@@ -29,7 +29,6 @@ var VIDEOS = {};
     'https://vidmoly.org/embed-wvlq0e4ot4ci.html',
     'https://byselapuix.com/e/t4o7c3973jg1',
     'https://streamtape.com/e/Ool1JqBLB3C77K/',
-    'https://byselapuix.com/d/t4o7c3973jg1/naruto-shippuden-hindi-1080p-s01-e01',
     'https://playmogo.com/e/3405nj69b84u',
     'https://playmogo.com/d/3405nj69b84u'
   ];
