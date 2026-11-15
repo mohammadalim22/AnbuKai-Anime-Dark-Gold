@@ -34,7 +34,8 @@ var VIDEOS = {};
   // ===== Episode 02: Hindi Dub =====
   s1[2].hindi = [
     'https://mixdrop.top/e/mkkk4wz0t8zj3k',
-    'https://voe.sx/e/s5x1bfpx6eqe'
+    'https://voe.sx/e/s5x1bfpx6eqe',
+    'https://luluvid.com/e/z1ojfqu4vo9o'
   ];
 
   // ===== Register Anime =====
