@@ -40,12 +40,12 @@ function langLabel(code) {
 
 /* ================= SERVERS (মোট ৭টা) =================
    videos.js এ প্রতিটা language এর লিংক এই ক্রমে দিতে হবে:
-   [0] FileMoon, [1] VidMoly, [2] LuluStream, [3] Voe,
+   [0] Byse, [1] VidMoly, [2] LuluStream, [3] Voe,
    [4] MixDrop, [5] Streamtape, [6] DoodStream
    (যে server এ লিংক নেই সেখানে "" লিখুন)
    ====================================================== */
 var SERVERS = [
-  'Server 01', // FileMoon
+  'Server 01', // Byse
   'Server 02', // VidMoly
   'Server 03', // LuluStream
   'Server 04', // Voe
@@ -514,6 +514,187 @@ function drawSources(streams, session, selected) {
   holder.append(label, select);
 }
 
+/* ================= CUSTOM VIDEO CONTROLS =================
+   শুধু সরাসরি ভিডিও ফাইল (.mp4 / .m3u8) এর জন্য কাজ করে।
+   Embed (iframe) লিংকে hosting site এর নিজের player ই থাকবে।
+   ফিচার: ±10 সেকেন্ড, ডাবল ট্যাপ, প্রগ্রেস বার, স্পিড, ফুলস্ক্রিন
+   ========================================================== */
+function fmtTime(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor(sec % 3600 / 60);
+  var sc = Math.floor(sec % 60);
+  return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(sc).padStart(2, '0');
+}
+
+function attachCustomControls(wrap, video) {
+  var speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+  var speedIndex = 2;
+  var hideTimer = null;
+  var tapTimer = null;
+  var lastTap = 0;
+  var lastZone = '';
+  var dragging = false;
+  var shown = true;
+  var disposed = false;
+
+  function el(tag, css, text) {
+    var node = document.createElement(tag);
+    if (css) node.style.cssText = css;
+    if (text) node.textContent = text;
+    return node;
+  }
+
+  var roundBtn = 'background:rgba(0,0,0,.5);color:#fff;border:0;border-radius:50%;width:50px;height:50px;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;margin:0;line-height:1';
+  var smallBtn = 'background:transparent;color:#fff;border:0;font-size:13px;font-weight:700;cursor:pointer;padding:6px 8px;margin:0;line-height:1';
+
+  var gesture = el('div', 'position:absolute;top:0;left:0;right:0;bottom:0;touch-action:manipulation');
+  var layer = el('div', 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;justify-content:flex-end;pointer-events:none;transition:opacity .2s;background:linear-gradient(to top,rgba(0,0,0,.7),transparent 40%,transparent 60%,rgba(0,0,0,.3))');
+
+  var center = el('div', 'position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);display:flex;justify-content:center;align-items:center;gap:30px;pointer-events:auto');
+  var backBtn = el('button', roundBtn, '⟲ 10');
+  var playBtn = el('button', roundBtn + ';width:62px;height:62px;font-size:24px;background:rgba(233,196,106,.9);color:#111', '▶');
+  var fwdBtn = el('button', roundBtn, '10 ⟳');
+  center.append(backBtn, playBtn, fwdBtn);
+
+  var bar = el('div', 'display:flex;align-items:center;gap:6px;padding:8px 10px;pointer-events:auto');
+  var curTime = el('span', 'color:#fff;font-size:12px;min-width:38px;text-align:center', '0:00');
+  var range = el('input', 'flex:1;min-width:0;accent-color:#e9c46a;height:22px;margin:0');
+  range.type = 'range';
+  range.min = '0';
+  range.max = '1000';
+  range.value = '0';
+  range.setAttribute('aria-label', 'Seek');
+  var durTime = el('span', 'color:#fff;font-size:12px;min-width:38px;text-align:center', '0:00');
+  var speedBtn = el('button', smallBtn, '1x');
+  var fsBtn = el('button', smallBtn + ';font-size:16px', '⛶');
+  bar.append(curTime, range, durTime, speedBtn, fsBtn);
+
+  layer.append(center, bar);
+
+  var flash = el('div', 'position:absolute;top:50%;transform:translateY(-50%);padding:10px 16px;border-radius:30px;background:rgba(0,0,0,.6);color:#fff;font-weight:700;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none');
+  wrap.append(gesture, layer, flash);
+
+  function setShown(value) {
+    shown = value;
+    layer.style.opacity = value ? '1' : '0';
+    center.style.pointerEvents = value ? 'auto' : 'none';
+    bar.style.pointerEvents = value ? 'auto' : 'none';
+  }
+
+  function scheduleHide() {
+    clearTimeout(hideTimer);
+    if (!video.paused && !dragging) hideTimer = setTimeout(function () { setShown(false); }, 3200);
+  }
+
+  function reveal() { setShown(true); scheduleHide(); }
+
+  function seekBy(delta) {
+    var duration = isFinite(video.duration) ? video.duration : Infinity;
+    video.currentTime = Math.max(0, Math.min(duration, (video.currentTime || 0) + delta));
+  }
+
+  function showFlash(text, side) {
+    flash.textContent = text;
+    flash.style.left = side === 'left' ? '12%' : '';
+    flash.style.right = side === 'right' ? '12%' : '';
+    flash.style.opacity = '1';
+    setTimeout(function () { flash.style.opacity = '0'; }, 450);
+  }
+
+  function togglePlay() {
+    if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); }
+    else video.pause();
+  }
+
+  function toggleFullscreen() {
+    var active = document.fullscreenElement || document.webkitFullscreenElement;
+    if (active) {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+      return;
+    }
+    var request = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+    if (request) request.call(wrap);
+    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+  }
+
+  function onGesture(event) {
+    var rect = gesture.getBoundingClientRect();
+    var x = event.clientX - rect.left;
+    var zone = x < rect.width / 3 ? 'left' : (x > rect.width * 2 / 3 ? 'right' : 'center');
+    var now = Date.now();
+    if (zone !== 'center' && zone === lastZone && now - lastTap < 320) {
+      clearTimeout(tapTimer);
+      lastTap = 0;
+      seekBy(zone === 'left' ? -10 : 10);
+      showFlash(zone === 'left' ? '⟲ 10s' : '10s ⟳', zone);
+      reveal();
+      return;
+    }
+    lastTap = now;
+    lastZone = zone;
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(function () {
+      if (shown) setShown(false); else reveal();
+    }, 260);
+  }
+
+  function syncPlay() { playBtn.textContent = video.paused ? '▶' : '❚❚'; if (video.paused) { clearTimeout(hideTimer); setShown(true); } else scheduleHide(); }
+  function syncTime() {
+    if (dragging) return;
+    curTime.textContent = fmtTime(video.currentTime);
+    if (isFinite(video.duration) && video.duration > 0) range.value = String(Math.round(video.currentTime / video.duration * 1000));
+  }
+  function syncDuration() { durTime.textContent = isFinite(video.duration) ? fmtTime(video.duration) : '--:--'; }
+
+  gesture.addEventListener('click', onGesture);
+  backBtn.onclick = function () { seekBy(-10); showFlash('⟲ 10s', 'left'); reveal(); };
+  fwdBtn.onclick = function () { seekBy(10); showFlash('10s ⟳', 'right'); reveal(); };
+  playBtn.onclick = function () { togglePlay(); reveal(); };
+  fsBtn.onclick = function () { toggleFullscreen(); reveal(); };
+  speedBtn.onclick = function () {
+    speedIndex = (speedIndex + 1) % speeds.length;
+    video.playbackRate = speeds[speedIndex];
+    speedBtn.textContent = speeds[speedIndex] + 'x';
+    reveal();
+  };
+  range.addEventListener('input', function () {
+    dragging = true;
+    if (isFinite(video.duration)) {
+      var target = Number(range.value) / 1000 * video.duration;
+      curTime.textContent = fmtTime(target);
+    }
+    clearTimeout(hideTimer);
+  });
+  range.addEventListener('change', function () {
+    if (isFinite(video.duration)) video.currentTime = Number(range.value) / 1000 * video.duration;
+    dragging = false;
+    scheduleHide();
+  });
+
+  video.addEventListener('play', syncPlay);
+  video.addEventListener('pause', syncPlay);
+  video.addEventListener('timeupdate', syncTime);
+  video.addEventListener('durationchange', syncDuration);
+  video.addEventListener('loadedmetadata', syncDuration);
+  syncDuration();
+  syncPlay();
+
+  return function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearTimeout(hideTimer);
+    clearTimeout(tapTimer);
+    gesture.removeEventListener('click', onGesture);
+    video.removeEventListener('play', syncPlay);
+    video.removeEventListener('pause', syncPlay);
+    video.removeEventListener('timeupdate', syncTime);
+    video.removeEventListener('durationchange', syncDuration);
+    video.removeEventListener('loadedmetadata', syncDuration);
+  };
+}
+
 /* ================= MEDIA PLAYER ================= */
 async function mountStream(stream, session) {
   var run = session.run;
@@ -538,12 +719,16 @@ async function mountStream(stream, session) {
   }
 
   var video = document.createElement('video');
-  video.controls = true;
+  video.controls = false; // নিজস্ব controls ব্যবহার হবে
   video.autoplay = true;
   video.playsInline = true;
   video.preload = 'auto';
-  video.style.cssText = 'width:100%;height:100%;background:#000';
-  top.appendChild(video);
+  video.style.cssText = 'width:100%;height:100%;background:#000;display:block';
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative;width:100%;height:100%;background:#000;overflow:hidden';
+  wrap.appendChild(video);
+  var disposeControls = attachCustomControls(wrap, video);
+  top.appendChild(wrap);
   appendPlayerClose(top);
 
   return new Promise(function (resolve, reject) {
@@ -569,6 +754,7 @@ async function mountStream(stream, session) {
       clearStartTimer();
       clearTimeout(recoveryTimer);
       clearTimeout(stallTimer);
+      if (disposeControls) disposeControls();
       video.removeEventListener('loadeddata', ready);
       video.removeEventListener('playing', playing);
       video.removeEventListener('waiting', waiting);
@@ -1219,20 +1405,20 @@ function paint(force) {
     return '<button class="' + (item[0] === SH.l ? 'on' : '') + '" onclick="changePlayerLanguage(' + index + ')">' + esc(t(item[1])) + '</button>';
   }).join('');
 
-  // একটা Server বাটন: চাপলে শুধু যে server গুলোতে ভিডিও আছে সেগুলো দেখাবে
+  // একটা "Server" বাটন: চাপলে পাশে আলাদা popup খুলবে (Server 01, 02, ...)
+  // শুধু যে server এ ভিডিও আছে সেগুলোই দেখাবে
   var availList = availableServers(anime[1], SH.s, SH.e, SH.l);
-  var curPos = availList.indexOf(SH.v);
   var serverControl;
   if (!availList.length) {
-    serverControl = '<div class="srvwrap" style="width:100%;margin:8px 0"><button class="btn sm" disabled style="opacity:.5;width:100%">' + esc(t('No server available')) + '</button></div>';
+    serverControl = '<div class="srvwrap" style="display:inline-block;margin:8px 0"><button class="btn sm" disabled style="opacity:.5">' + esc(t('No server')) + '</button></div>';
   } else {
     var items = availList.map(function (serverIndex, pos) {
       var active = serverIndex === SH.v;
-      return '<button onclick="changePlayerServer(' + serverIndex + ')" style="display:block;width:100%;text-align:left;padding:12px 16px;margin:0;border:0;border-bottom:1px solid rgba(255,255,255,.08);background:' + (active ? 'rgba(233,196,106,.18)' : 'transparent') + ';color:inherit;font:inherit;cursor:pointer">' + (active ? '✓ ' : '') + esc(t('Server')) + ' ' + String(pos + 1).padStart(2, '0') + '</button>';
+      return '<button onclick="changePlayerServer(' + serverIndex + ')" style="display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;text-align:left;padding:13px 18px;margin:0;border:0;border-bottom:1px solid rgba(255,255,255,.08);background:' + (active ? 'rgba(233,196,106,.2)' : 'transparent') + ';color:#fff;font:inherit;font-weight:' + (active ? '700' : '500') + ';cursor:pointer"><span>' + esc(t('Server')) + ' ' + String(pos + 1).padStart(2, '0') + '</span>' + (active ? '<span>✓</span>' : '') + '</button>';
     }).join('');
-    serverControl = '<div class="srvwrap" style="width:100%;margin:8px 0">'
-      + '<button class="btn sm" id="srv-btn" onclick="toggleServerMenu()" style="width:100%;display:flex;justify-content:space-between;align-items:center"><span>' + esc(t('Server')) + ' ' + String((curPos < 0 ? 0 : curPos) + 1).padStart(2, '0') + ' · ' + availList.length + '</span><span id="srv-arrow">' + (SH.srvOpen ? '▴' : '▾') + '</span></button>'
-      + '<div id="srv-menu" style="display:' + (SH.srvOpen ? 'block' : 'none') + ';margin-top:6px;border-radius:14px;overflow:hidden;background:rgba(20,20,30,.96);border:1px solid rgba(233,196,106,.35)">' + items + '</div>'
+    serverControl = '<div class="srvwrap" style="position:relative;display:inline-block;margin:8px 0">'
+      + '<button class="btn sm" id="srv-btn" onclick="toggleServerMenu()" style="display:inline-flex;align-items:center;gap:8px"><span>' + esc(t('Server')) + '</span><span id="srv-arrow">' + (SH.srvOpen ? '▴' : '▾') + '</span></button>'
+      + '<div id="srv-menu" style="display:' + (SH.srvOpen ? 'block' : 'none') + ';position:absolute;left:0;top:calc(100% + 6px);z-index:60;min-width:190px;max-height:260px;overflow-y:auto;border-radius:16px;background:rgba(18,18,28,.98);border:1px solid rgba(233,196,106,.4);box-shadow:0 12px 32px rgba(0,0,0,.55)">' + items + '</div>'
       + '</div>';
   }
 
