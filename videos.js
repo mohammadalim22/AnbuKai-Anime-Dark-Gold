@@ -1,6 +1,12 @@
 /* ===== VIDEO SETTINGS =====
    Format:
    VIDEOS['Anime Name'][season][episode][language] = [server links]
+
+   Server Order:
+   01 = Streamtape
+   02 = Playmogo
+   03 = Byse
+
    language: sub | dub | hindi | bangla
 */
 
@@ -18,27 +24,21 @@ var VIDEOS = {};
   for (i = 1; i <= 10; i++) {
     s1[i] = {
       dub: [
-        base + (i < 10 ? '0' + i : i) + '.mp4',
-        ''
+        base + (i < 10 ? '0' + i : i) + '.mp4'
       ]
     };
   }
 
   // ===== Episode 01: Hindi Dub =====
   s1[1].hindi = [
-    'https://vidmoly.org/embed-wvlq0e4ot4ci.html',
-    'https://byselapuix.com/e/t4o7c3973jg1',
     'https://streamtape.com/e/Ool1JqBLB3C77K/',
     'https://playmogo.com/e/3405nj69b84u',
-    'https://playmogo.com/d/3405nj69b84u'
+    'https://byselapuix.com/e/t4o7c3973jg1'
   ];
 
   // ===== Episode 02: Hindi Dub =====
-  s1[2].hindi = [
-    'https://mixdrop.top/e/mkkk4wz0t8zj3k',
-    'https://voe.sx/e/s5x1bfpx6eqe',
-    'https://luluvid.com/e/z1ojfqu4vo9o'
-  ];
+  // Server links pending
+  s1[2].hindi = [];
 
   // ===== Register Anime =====
   VIDEOS['Naruto Shippuden'] = {
